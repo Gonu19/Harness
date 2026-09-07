@@ -10,10 +10,8 @@ node scripts/gates-report.mjs <저장소>    # 그 판정이 걸려 있나
 node scripts/budget.mjs <저장소>          # 문서가 한도 안인가 (쓰는 중에)
 ```
 
-앞 둘은 하나만 보면 반쪽이다.
-
-종료 코드와 표 읽는 법은 두 스크립트가 스스로 찍는다. 여기 옮겨 적지 않는다.
-읽을 때 놓치기 쉬운 것 둘만 —
+앞 둘은 하나만 보면 반쪽이다. 종료 코드와 표 읽는 법은 스크립트가 스스로
+찍으니 옮겨 적지 않는다. 놓치기 쉬운 것 둘만 —
 
 - verify 의 **"전부 통과"는 "전부 돌았다"가 아니다.** 못 돌린 사례를 따로 찍는다
 - gates-report 의 **"등록됨"은 "발화한다"가 아니다.** 발화 확인은 verify 다
@@ -42,7 +40,7 @@ Claude Code 훅은 **사용자 레벨**(`~/.claude/settings.json`)에. 형식은
 **길게**.
 
 ```bash
-for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check "$f"; done
+for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check $f; done
 ```
 
 ## 도구가 실패하는 방식
@@ -52,9 +50,8 @@ for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check "$f"; done
 | 증상 | 진짜 원인 |
 |---|---|
 | 스크립트로 쓴 문서가 깨진다 | 이스케이프가 셸·스크립트·대상에서 세 번 해석된다. **내용은 Write 도구로** |
-| 치환이 "찾지 못함" 으로 실패 | 앞선 편집으로 앵커가 바뀌었다. 다시 읽고 잡는다 |
-| `spawn EINVAL` | Windows 는 `.bat` 을 셸 없이 못 띄운다. `cmd.exe /d /s /c` 로 감싼다 |
-| 락이 안 풀린다 | `process.exit()` 은 `finally` 를 건너뛴다. `process.on('exit')` 로 |
+| 게이트가 낡은 크기를 잰다 | PreToolUse 는 **명령 전체**를 막는다. `git add && git commit` 이면 `add` 가 안 돌아 직전 인덱스를 잰다. **`add` 를 따로 불러라** |
+| `spawn EINVAL` | Windows 는 `.bat`·`.cmd` 를 셸 없이 못 띄운다. `cmd.exe /d /s /c` 로 감싸거나 JS 진입점을 `node` 로 직접 불러 셸을 피한다 |
 | `git checkout -- <경로>` 가 원상복구가 아니다 | **인덱스에서** 복원한다. `HEAD` 를 명시해라 |
 | git 훅이 발화하지 않는다 | 확장자 없는 POSIX 스크립트여야 한다. `.bat`·`.cmd` 는 **조용히** 무시 |
 | Bash heredoc 이 거부됨 | 워크트리 격리 가드. 파일은 Write 도구로 만든다 |
@@ -62,5 +59,5 @@ for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check "$f"; done
 ## 절대 하지 않는 것
 
 - **게이트가 막은 것을 우회하기.** 우회하려는 순간이 설계를 다시 볼 때다
-- 실저장소 인덱스에 테스트용 스테이징 남기기 — `verify` 는 임시 저장소를 쓴다
-- `git push` — 원격은 사람이 수동으로
+- 실저장소 인덱스에 테스트용 스테이징 남기기 — `verify` 는 임시 저장소다
+- `git push` — 원격은 사람이 한다

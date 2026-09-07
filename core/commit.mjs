@@ -62,11 +62,20 @@ export function loadBudgets(root) {
  *
  * **코드 펜스 안의 주석은 세지 않고 남긴다.** 그건 제거되지 않고 그대로
  * 실린다 — 예시 코드에 든 주석까지 공짜로 치면 한도가 조용히 열린다.
+ *
+ * ## 줄바꿈은 세지 않는다 (CRLF 를 LF 로 맞춘다)
+ *
+ * 예방적이다. `core.autocrlf` 설정에 따라 인덱스와 워킹트리의 줄바꿈이 갈릴 수
+ * 있고, 그러면 `scripts/budget.mjs`(워킹트리)와 커밋 게이트(인덱스)가 같은
+ * 문서에 다른 수를 낸다. **두 경로가 어긋나면 어느 쪽도 못 믿는다.**
+ *
+ * 줄바꿈은 내용이 아니다. 문서 하나가 플랫폼에 따라 다른 예산을 쓰는 것 자체가
+ * 틀린 것이지, 어느 쪽 수가 옳은 게 아니다.
  */
 export function loadedBytes(path, buffer) {
   if (!/\.md$/i.test(path)) return buffer.length;
 
-  const lines = buffer.toString('utf8').split('\n');
+  const lines = buffer.toString('utf8').split(/\r?\n/);
   const out = [];
   let inFence = false;
   let inComment = false;
@@ -93,8 +102,18 @@ export function loadedBytes(path, buffer) {
  * @param {{key:string,question:string}[]} [arg.extraKeys] 프로젝트 고유 불변조건
  */
 export function checkCommit({ root, message, changed, extraKeys = [] }) {
+  // 문서 예산은 **소스 변경 여부와 무관하게** 본다.
+  //
+  // 실측으로 걸린 결함이다. 원래는 `touchesSource` 가 거짓이면 곧장 skip 했는데,
+  // 그러면 **문서만 바뀌는 커밋에서 문서 예산 검사가 아예 안 돈다.** 문서가
+  // 자라는 건 정확히 그런 커밋이다. 게이트가 있는데 필요한 자리에 없었다.
+  const budget = checkBudgets(root, changed);
+  if (budget.verdict === 'cannot') return budget;
+
   const touchesSource = changed.some((f) => /^src\//.test(f));
-  if (!touchesSource) return skip('문서만 바뀌는 커밋이다');
+  if (!touchesSource) {
+    return budget.verdict === 'block' ? budget : skip('문서만 바뀌는 커밋이다');
+  }
 
   if (message === null) {
     return cannot('커밋 메시지를 읽지 못했다',
@@ -131,33 +150,42 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
     );
   }
 
-  // 문서 크기 예산.
-  //
-  // 별도 검사로 두지 않고 여기 합쳤다. 크기 검사는 "커밋에 들어가는 내용"에
-  // 대해서만 뜻이 있는데, 그 시점이 바로 여기이기 때문이다.
-  //
-  // **워킹트리가 아니라 인덱스를 잰다.** 디스크를 재면 스테이지에서 뺀
-  // 초과분이 통과하고, 목록의 파일 이름이 바뀌면 "파일 없음 → 0바이트 →
-  // 조용히 통과" 가 된다.
+  if (budget.verdict === 'block') facts.push(...budget.items);
+
+  if (missing.length === 0 && facts.length === 0) return skip('확인할 것이 남지 않았다');
+
+  return block(render({ missing, facts, notices, changed }));
+}
+
+/**
+ * 문서 크기 예산.
+ *
+ * 별도 게이트로 두지 않고 여기 합쳤다. 크기 검사는 "커밋에 들어가는 내용"에
+ * 대해서만 뜻이 있는데, 그 시점이 바로 여기이기 때문이다.
+ *
+ * **워킹트리가 아니라 인덱스를 잰다.** 디스크를 재면 스테이지에서 뺀 초과분이
+ * 통과하고, 목록의 파일 이름이 바뀌면 "파일 없음 → 0바이트 → 조용히 통과"가 된다.
+ *
+ * @returns skip | cannot | {verdict:'block', items:string[]}
+ */
+function checkBudgets(root, changed) {
   const loaded = loadBudgets(root);
   if (loaded.error) return cannot('예산 파일을 읽지 못했다', loaded.error);
 
+  const items = [];
   for (const [path, limit] of Object.entries(loaded.budgets)) {
     if (!changed.includes(path)) continue;
     const raw = indexSize(root, path);
     if (raw === null) continue;
     const size = loadedBytes(path, raw);
     if (size <= limit) continue;
-    facts.push(
+    items.push(
       `\`${path}\` 가 ${size.toLocaleString()}바이트로 한도 ${limit.toLocaleString()}를 ` +
       `${(size - limit).toLocaleString()}바이트 넘었다(HTML 주석 제외 · 실제 로드량).\n` +
       '  늘리지 말고 내려보내라 — 넘친 내용은 결정 문서나 조건부 규칙으로 간다.'
     );
   }
-
-  if (missing.length === 0 && facts.length === 0) return skip('확인할 것이 남지 않았다');
-
-  return block(render({ missing, facts, notices, changed }));
+  return items.length > 0 ? { verdict: 'block', items, reason: render({ missing: [], facts: items, notices: [], changed }) } : skip();
 }
 
 function render({ missing, facts, notices, changed }) {

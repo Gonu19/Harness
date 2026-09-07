@@ -199,6 +199,19 @@ function verifyCommit(fx) {
     (() => { git(fx.root, ['reset', '-q']); git(fx.root, ['add', 'STATUS.md']);
              return bash('git commit -m "문서만"'); })());
 
+  // **문서만 바뀌어도 예산은 본다.** 원래는 여기서 곧장 skip 해서 예산 검사가
+  // 아예 안 돌았다 — 문서가 자라는 건 정확히 이런 커밋인데. 실측으로 걸렸다.
+  git(fx.root, ['reset', '-q']);
+  fx.w('.claude/harness-budgets.json', JSON.stringify({ 'STATUS.md': 64 }));
+  fx.w('STATUS.md', '#'.repeat(500) + '\n');
+  git(fx.root, ['add', 'STATUS.md']);
+  expect(C, '문서만 바뀌는 커밋도 예산은 본다', 'block', 2,
+    bash('git commit -m "문서만"'), '한도');
+
+  git(fx.root, ['reset', '-q']);
+  git(fx.root, ['checkout', '-q', 'HEAD', '--', 'STATUS.md']);
+  rmSync(join(fx.root, '.claude'), { recursive: true, force: true });
+
   // 예산 초과. 인덱스 기준이어야 한다 — 워킹트리를 재면 스테이지에서 뺀 초과분이 샌다.
   git(fx.root, ['reset', '-q']);
   fx.w('.claude/harness-budgets.json', JSON.stringify({ 'STATUS.md': 64 }));
@@ -304,6 +317,13 @@ async function verifyBudget() {
   const fenced = '# 제목\n```html\n<!-- 이건 그대로 실린다 -->\n```\n';
   record(B, '펜스 안의 주석은 센다 (한도가 열리면 안 된다)', 'block',
     loadedBytes('a.md', Buffer.from(fenced)) === bytes(fenced), '');
+
+  // **CRLF 와 LF 가 같은 수를 내야 한다.** 안 그러면 워킹트리(LF)와
+  // 인덱스(CRLF)가 어긋나서 budget.mjs 와 커밋 게이트가 다른 답을 낸다.
+  const lf = '# 제목\n본문\n또 한 줄\n';
+  record(B, 'CRLF 와 LF 가 같은 예산을 쓴다', 'block',
+    loadedBytes('a.md', Buffer.from(lf)) === loadedBytes('a.md', Buffer.from(lf.replace(/\n/g, '\r\n'))),
+    `LF=${loadedBytes('a.md', Buffer.from(lf))} CRLF=${loadedBytes('a.md', Buffer.from(lf.replace(/\n/g, '\r\n')))}`);
 
   // 마크다운이 아니면 손대지 않는다.
   const json = '{ "a": 1 }';
