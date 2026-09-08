@@ -32,6 +32,7 @@ Claude Code 0/2 · git 훅 0/1 · CLI 0/1/2. 어디로 가든 `cannot` 은 `pass
 |---|---|
 | `core/` | 판정. 순수 함수. 어느 하네스에서 부르든 답이 같다 |
 | `.claude/rules/` | `paths:` 조건부 로드 — `AGENTS.md` 예산의 **배출구** |
+| `decisions/` | 대안·근거·뒤집힐 조건이 있는 판단. 지금 셋 |
 | `adapters/claude-code/` | stdin JSON → 판정 → exit 0/2. **우회 수단이 없다** |
 | `adapters/git/` | `pre-commit`·`commit-msg`. 어느 에이전트든 돈다. `--no-verify` 로 뚫린다 |
 | `scripts/` | `verify`(변조 회귀 43건) · `gates-report`(게이트 생존) · `routing-lint` |
@@ -44,7 +45,8 @@ Claude Code 0/2 · git 훅 0/1 · CLI 0/1/2. 어디로 가든 `cannot` 은 `pass
 |---|---|
 | `core/` + `adapters/claude-code/` | **동작 · 변조 회귀로 검증됨** |
 | `adapters/git/` | **동작 · 실제 커밋으로 검증됨** — 막힘/통과 양방향 |
-| `scripts/verify.mjs` | 60건 통과 · 2건 건너뜀(실제 Gradle 데몬·실제 tsc. 건너뛴 사실을 찍는다) |
+| `scripts/verify.mjs` | 68건 통과 · 2건 건너뜀(실제 Gradle 데몬·실제 tsc. 건너뛴 사실을 찍는다) |
+| `scripts/apply-template.mjs` | **동작** — 빈 저장소에 끝까지 적용해 `gates-report` exit 0 확인 |
 | `scripts/budget.mjs` | 문서 예산 — **HTML 주석을 뺀 실제 로드량**을 잰다 |
 | 문서 포인터 | `CLAUDE.md`·`GEMINI.md`·`.cursor/rules/` 전부 `AGENTS.md` 를 가리킨다 |
 | `scripts/gates-report.mjs` | **동작** — TS 저장소에서 타입검사 게이트 부재를 exit 1 로 짚는다 |

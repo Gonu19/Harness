@@ -18,10 +18,12 @@
 import { skip } from './verdict.mjs';
 import * as compile from './compile.mjs';
 import * as typecheck from './typecheck.mjs';
+import * as pycheck from './pycheck.mjs';
 
 const HANDLERS = [
   { id: 'java-gradle', label: 'Java / Gradle', scope: compile.scope, run: compile.checkJavaEdit },
   { id: 'typescript', label: 'TypeScript', scope: typecheck.scope, run: typecheck.checkTsEdit },
+  { id: 'python', label: 'Python', scope: pycheck.scope, run: pycheck.checkPyEdit },
 ];
 
 /** 어느 구현이 이 파일을 맡는가. 없으면 null. `gates-report` 도 쓴다. */

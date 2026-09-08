@@ -22,6 +22,7 @@ const MARKERS = {
   // 지배하므로 `package.json` 이 아니라 `tsconfig.json` 을 표식으로 쓴다 —
   // 뿌리의 package.json 을 잡으면 엉뚱한 프로젝트를 검사하게 된다.
   tsconfig: ['tsconfig.json'],
+  python: ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Pipfile'],
   git: ['.git'],
 };
 

@@ -362,6 +362,13 @@ function verifyEditRun() {
   }
   runTsCases(K);
 
+  const python = spawnSync('python', ['--version'], { encoding: 'utf8', windowsHide: true });
+  if (python.error || python.status !== 0) {
+    skipped.push({ group: K, name: 'Python 검사 경로 전체', why: 'python 이 없다' });
+  } else {
+    runPyCases(K);
+  }
+
   // 스텁이 대신하지 못하는 것 — 숨기지 않는다.
   skipped.push({ group: K, name: '실제 Gradle 데몬·증분 빌드 동작',
     why: '스텁 래퍼는 javac 만 부른다. Gradle 고유 동작은 미검증' });
@@ -412,6 +419,49 @@ function runJavaCases(K) {
       edit('src/main/java/Ok.java'));
   } finally {
     rmSync(fx.root, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Python 은 스텁이 필요 없다 — 인터프리터가 실제로 있으므로 **진짜로 돌린다.**
+ * mypy 만은 미설치 상태를 이용해 "선언했는데 없다 → 판정 불가" 를 확인한다.
+ */
+function runPyCases(K) {
+  const root = mkdtempSync(join(tmpdir(), 'harness-py-'));
+  const w = (rel, body) => {
+    const p = join(root, rel);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, body);
+    return p;
+  };
+  const edit = (rel) => runHook(HOOK.edit,
+    { tool_name: 'Edit', tool_input: { file_path: join(root, rel) } }, root);
+  try {
+    // Python 프로젝트 표식이 없으면 소관이 아니다.
+    w('loose.py', 'x = 1\n');
+    expect(K, 'py: 프로젝트 표식 없으면 소관 아님', 'pass', 0, edit('loose.py'));
+
+    w('pyproject.toml', '[project]\nname = "x"\n');
+    w('src/ok.py', 'def f(a):\n    return a + 1\n');
+    expect(K, 'py: 구문 정상 → 통과', 'pass', 0, edit('src/ok.py'));
+
+    w('src/bad.py', 'def f(a:\n    return a\n');
+    expect(K, 'py: 구문 오류 → 차단', 'block', 2, edit('src/bad.py'), '구문 오류');
+
+    // 짝 — 오류를 고치면 다시 통과해야 한다.
+    w('src/bad.py', 'def f(a):\n    return a\n');
+    expect(K, 'py: 오류를 고치면 → 통과', 'pass', 0, edit('src/bad.py'));
+
+    // 의존성 디렉터리는 건드리지 않는다. 통제할 수 없는 실패가 편집을 막으면 안 된다.
+    w('.venv/lib/broken.py', 'def f(a:\n');
+    expect(K, 'py: .venv 안은 소관 아님', 'pass', 0, edit('.venv/lib/broken.py'));
+
+    // mypy 를 선언했는데 설치가 안 됐다 → **통과가 아니라 판정 불가다.**
+    w('pyproject.toml', '[project]\nname = "x"\n\n[tool.mypy]\nstrict = true\n');
+    expect(K, 'py: mypy 선언했는데 미설치 → 판정 불가', 'block', 2,
+      edit('src/ok.py'), '설치되지 않았다');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }
 
