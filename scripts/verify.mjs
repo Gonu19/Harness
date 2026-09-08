@@ -24,7 +24,7 @@
  * 사용법: node scripts/verify.mjs [--verbose]
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, copyFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, copyFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -70,6 +70,42 @@ function runHook(path, payload, cwd) {
   });
   if (r.error) return { code: null, out: '', err: String(r.error.message || r.error) };
   return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
+}
+
+/**
+ * 스크립트를 인자와 함께 돌린다.
+ *
+ * `env` 로 `USERPROFILE`/`HOME` 을 갈아끼울 수 있게 한 것이 핵심이다.
+ * `gates-report` 는 사용자 전역 설정(`~/.claude/settings.json`)을 읽으므로,
+ * 그대로 두면 **검증 결과가 이 기계의 설정에 딸려 간다** — 훅을 등록한
+ * 기계에서는 통과하고 안 한 기계에서는 실패하는 검사가 된다. 그건 검사가
+ * 아니라 환경 보고다. 가짜 홈을 쥐여 주고 재현 가능하게 만든다.
+ */
+function runScript(path, args = [], opts = {}) {
+  const r = spawnSync(process.execPath, [path, ...args], {
+    encoding: 'utf8', windowsHide: true, ...opts,
+    env: { ...process.env, ...(opts.env ?? {}) },
+  });
+  if (r.error) return { code: null, out: '', err: String(r.error.message || r.error) };
+  return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
+}
+
+/** 훅 등록 상태를 통제한 가짜 홈. `null` 이면 훅이 하나도 없는 홈이다. */
+function fakeHome(register) {
+  const home = mkdtempSync(join(tmpdir(), 'harness-home-'));
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  const H = join(REPO, 'adapters', 'claude-code').replace(/\\/g, '/');
+  const settings = register
+    ? { hooks: {
+        PostToolUse: [{ matcher: 'Write|Edit', hooks: [{ type: 'command', command: `node "${H}/edit-check.mjs"` }] }],
+        PreToolUse: [
+          { matcher: 'Write|Edit|Bash', hooks: [{ type: 'command', command: `node "${H}/guard-migrations.mjs"` }] },
+          { matcher: 'Bash', hooks: [{ type: 'command', command: `node "${H}/commit-checklist.mjs"` }] },
+        ],
+      } }
+    : {};
+  writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(settings, null, 2));
+  return { home, env: { USERPROFILE: home, HOME: home } };
 }
 
 /**
@@ -586,6 +622,130 @@ function verifyGitHooks() {
 }
 
 // ---------------------------------------------------------------------------
+// 검사 6 — apply-template. **놓았다는 주장을 검증한다.**
+//
+// 이 스크립트가 하는 말이 셋이다: 놓았다 · 이미 같다 · 거부한다.
+// 셋 다 틀릴 수 있고, 틀리면 조용하다 — 특히 "놓았다" 가 틀리면 이식이
+// 부분 적용으로 끝나는데 사람은 끝난 줄 안다.
+// ---------------------------------------------------------------------------
+function verifyApplyTemplate() {
+  const A = 'apply-template';
+  const script = join(REPO, 'scripts', 'apply-template.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'harness-apply-'));
+
+  try {
+    // --- dry-run 은 쓰지 않아야 한다 -------------------------------------
+    const dry = runScript(script, [root, '--dry-run']);
+    record(A, '--dry-run 은 exit 0', 'pass', dry.code === 0, `exit=${dry.code}\n${dry.err}`);
+    record(A, '--dry-run 은 파일을 만들지 않는다', 'block',
+      !existsSync(join(root, 'AGENTS.md')),
+      'AGENTS.md 가 생겼다 — 미리보기가 쓰고 있다');
+
+    // --- 실제 적용 --------------------------------------------------------
+    const first = runScript(script, [root]);
+    record(A, '빈 저장소에 적용 → exit 0', 'pass', first.code === 0, `exit=${first.code}\n${first.err}`);
+
+    // 놓겠다고 말한 것이 실제로 있는지 본다. 목록을 따로 적으면 두 벌이 되므로
+    // **스크립트 자신의 출력에서 뽑아** 대조한다.
+    // `←` 를 요구한다. 요약줄(`놓음 11 · 이미 같음 0 …`)이 같은 낱말을 쓰기
+    // 때문에, 그것 없이 잡으면 개수 "11" 을 파일 이름으로 읽는다.
+    const claimed = [...first.out.matchAll(/^\s*놓음\s{2}(\S+)\s+←/gm)].map((m) => m[1]);
+    const missing = claimed.filter((rel) => !existsSync(join(root, rel)));
+    record(A, `놓았다고 말한 ${claimed.length}개가 실제로 있다`, 'pass',
+      claimed.length >= 10 && missing.length === 0,
+      `주장 ${claimed.length}개 · 없는 것: ${missing.join(', ') || '없음'}`);
+
+    // 자리표시자가 남아 있으면 사람이 채우는 것을 잊는다. 조용한 결손이다.
+    const agents = readFileSync(join(root, 'AGENTS.md'), 'utf8');
+    record(A, '자리표시자가 채워졌다', 'pass',
+      !agents.includes('<프로젝트 이름>') && !agents.includes('<하네스 경로>'),
+      agents.slice(0, 200));
+
+    // --- 멱등 -------------------------------------------------------------
+    const second = runScript(script, [root]);
+    record(A, '두 번째 적용은 전부 "같음" (멱등)', 'pass',
+      second.code === 0
+        && !/^\s*놓음\s{2}\S+\s+←/m.test(second.out)   // 파일을 새로 놓은 줄이 없어야 한다
+        && /^\s*같음\s{2}\S+/m.test(second.out),
+      `exit=${second.code}\n${second.out.slice(0, 300)}`);
+
+    // --- 거부 (변조) ------------------------------------------------------
+    writeFileSync(join(root, 'AGENTS.md'), '이 프로젝트만의 규칙\n');
+    const clash = runScript(script, [root]);
+    record(A, '내용이 다른 기존 파일 → 거부하고 exit 1', 'block',
+      clash.code === 1 && clash.err.includes('거부'),
+      `exit=${clash.code}\n${clash.err.slice(0, 200)}`);
+    record(A, '거부된 파일을 덮지 않았다', 'block',
+      readFileSync(join(root, 'AGENTS.md'), 'utf8') === '이 프로젝트만의 규칙\n',
+      '덮였다 — 시행 중인 규칙을 지웠다');
+
+    // --- 대상이 없으면 판정 불가 ------------------------------------------
+    const nowhere = runScript(script, [join(root, '없는곳')]);
+    record(A, '없는 대상 → exit 2', 'block', nowhere.code === 2, `exit=${nowhere.code}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 검사 7 — gates-report. **"게이트가 산다" 는 주장을 검증한다.**
+//
+// 가짜 홈으로 훅 등록 상태를 통제한다. 안 그러면 이 검사가 "이 기계에 훅이
+// 걸려 있나" 를 보는 것이 되어, 검사가 아니라 환경 보고가 된다.
+// ---------------------------------------------------------------------------
+function verifyGatesReport() {
+  const G = 'gates-report';
+  const script = join(REPO, 'scripts', 'gates-report.mjs');
+  const bare = fakeHome(false);
+  const wired = fakeHome(true);
+  const root = mkdtempSync(join(tmpdir(), 'harness-gates-'));
+
+  try {
+    // git 저장소가 아니면 판정 자체가 성립하지 않는다.
+    const nogit = runScript(script, [root], { env: bare.env });
+    record(G, 'git 저장소가 아니면 → exit 2', 'block',
+      nogit.code === 2 && nogit.err.includes('git 저장소가 아니다'), `exit=${nogit.code}`);
+
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    writeFileSync(join(root, 'pyproject.toml'), '[project]\nname="x"\n');
+
+    // 훅이 어느 계층에도 없다 → 결손이다.
+    const dead = runScript(script, [root], { env: bare.env });
+    record(G, '훅이 하나도 없으면 → exit 1', 'block',
+      dead.code === 1 && dead.out.includes('★'), `exit=${dead.code}\n${dead.out.slice(-300)}`);
+
+    // 짝 — 도구 계층만 걸려도 산다. 이게 없으면 "항상 ★ 내는 표" 와 구별 안 된다.
+    const alive = runScript(script, [root], { env: wired.env });
+    record(G, '도구 계층이 걸리면 → exit 0', 'pass',
+      alive.code === 0, `exit=${alive.code}\n${alive.out.slice(-300)}`);
+
+    // 스택을 못 알아보면 통과가 아니다.
+    rmSync(join(root, 'pyproject.toml'));
+    const unknown = runScript(script, [root], { env: wired.env });
+    record(G, '스택을 못 알아보면 → exit 1', 'block',
+      unknown.code === 1 && unknown.out.includes('스택을 알아보지 못했다'),
+      `exit=${unknown.code}\n${unknown.out.slice(-300)}`);
+
+    // 짝 — 사람이 "빌드가 없다" 고 **선언**하면 통과한다.
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'harness-gates.json'), '{"stack":"none"}');
+    const declared = runScript(script, [root], { env: wired.env });
+    record(G, 'stack:none 을 선언하면 → exit 0', 'pass',
+      declared.code === 0 && declared.out.includes('사람이 정한 것이다'),
+      `exit=${declared.code}\n${declared.out.slice(-300)}`);
+
+    // 선언 파일이 깨졌으면 "선언이 없다" 가 아니라 판정 불가다.
+    writeFileSync(join(root, '.claude', 'harness-gates.json'), '{깨짐');
+    const broken = runScript(script, [root], { env: wired.env });
+    record(G, '선언 파일이 깨졌으면 → exit 2', 'block',
+      broken.code === 2 && broken.err.includes('없는 것과 다른 사실'),
+      `exit=${broken.code}\n${broken.err.slice(0, 200)}`);
+  } finally {
+    for (const p of [root, bare.home, wired.home]) rmSync(p, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 실행
 // ---------------------------------------------------------------------------
 const missing = Object.entries(HOOK).filter(([, p]) => !existsSync(p));
@@ -609,6 +769,8 @@ try {
   verifyEditScope(fx);
   verifyEditRun();
   verifyGitHooks();
+  verifyApplyTemplate();
+  verifyGatesReport();
 } finally {
   rmSync(fx.root, { recursive: true, force: true });
 }
