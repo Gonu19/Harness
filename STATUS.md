@@ -13,52 +13,49 @@
 `adapters/claude-code/` 는 Claude Code 에서만 돌지만 **우회 수단이 없다.**
 `adapters/git/` 은 어느 에이전트든 돌지만 `--no-verify` 로 뚫린다. 상보다.
 
-## 되는 것 — 83건 회귀로 검증됨
+## 되는 것 — 89건 회귀로 검증됨
 
 | 게이트 | 도구 계층 | git 계층 |
 |---|---|---|
 | `guard-migrations` | Write/Edit/Bash | `pre-commit` |
 | `commit-checklist` | Bash 가로채기 | `commit-msg` |
-| `edit-check` | Java `compileJava`/`compileTestJava` · TS `tsc` · **Py `ast.parse`/mypy** | 없다(느려서 값을 잃는다) |
+| `edit-check` | Java `compileJava`/`compileTestJava` · TS `tsc` · Py `ast.parse`/mypy | 없다(느려서 값을 잃는다) |
 
 Python 은 스텁 없이 실제 인터프리터로 검증했다. 바닥이 구문 검사인 이유는
 **거짓 차단이 원리적으로 없는 유일한 검사**라서다 — mypy 는 선언한 곳만.
 
-## 이식이 명령 셋이 됐다
+`claudeMdExcludes` 는 **사용자 스코프에도 먹는다**(0a 분기 A). `session-log` 발화도 봤다.
+
+## 이식 — 명령 셋 + 온보딩 스킬
 
 ```bash
-node scripts/apply-template.mjs <프로젝트>   # 문서·설정 (있는 파일은 안 덮는다)
-node adapters/git/install.mjs   <프로젝트>   # git 훅
+node scripts/apply-template.mjs <프로젝트> [--with old,reference]
+node adapters/git/install.mjs   <프로젝트>
 node scripts/gates-report.mjs   <프로젝트>   # ← exit 0 이어야 끝
 ```
 
-빈 Python 저장소에 끝까지 돌려 `exit 0` 을 확인했다. 절차는 `docs/이식-절차.md`.
+빈 저장소에 끝까지 돌려 확인했고 **둘 다 회귀에 있다** — "놓았다"·"게이트가
+산다" 는 주장을 검증하는 것이 없었다. `gates-report` 쪽은 **가짜 홈**으로
+훅 등록 상태를 통제한다(안 그러면 환경 보고다).
 
-**두 스크립트 다 회귀에 들어갔다** — "놓았다"·"게이트가 산다" 는 주장을
-검증하는 것이 없었다. `gates-report` 쪽은 **가짜 홈**으로 훅 등록 상태를
-통제한다. 안 그러면 검사가 아니라 이 기계의 환경 보고가 된다.
+빈 프로젝트는 `/harness-init` 이 위 셋을 부르고 그 세션에서 문서를 채운다.
+**스크립트가 놓고 스킬이 채운다**(`D4`) — 스킬은 검증 가능한 산출물을 못 내므로
+**산출물 쪽에 판정을 걸었다**: `STATUS` 「도는 것」은 채우지 않고, `RUNBOOK`
+명령은 한 번씩 실제로 돌린다.
 
-## 0a 판정 완료 — 분기 A
+`--with` 는 선택. `old/` 는 과거 기획(옮기고 지운다 · git 에 넣는다),
+`Reference/` 는 외부 재료(git 에서 빼고 인덱스만). **재료지 근거가 아니다.**
 
-`claudeMdExcludes` 가 **사용자 스코프 규칙에도 먹는다.** 전사의
-`attachment.type="instructions"` 레코드로 확인했다 — 제외 O 인 저장소엔
-`ecc/common/*` 0개, 제외 X 엔 10개 전부(18KB ≈ 6천 토큰).
-템플릿 `settings.local.json` 에 표준 항목으로 들어갔다.
+## 다음 — 전부 조건부다
 
-`session-log` **발화 확인** — `harness-sessions.log` 에 `alive` +
-`session-start(source=startup)`.
-
-## 다음 (우선순위 순)
-
-**계획된 것은 다 했다.** 남은 셋은 전부 조건부다 —
-
-1. **CL v2** — 안 켜기로 정했다(`D3`). 손 기록 의례가 먼저다. 같은 설명을
-   반복하고 있다는 것이 관측되면 그때 켠다
-2. `decisions/README.md` — 결정이 10개를 넘으면. 지금 셋이다
-3. Go·Rust 게이트 — 툴체인이 생기면. 지금은 검증할 수 없고,
-   **미검증 게이트는 넣지 않는다**
+1. **CL v2** — 안 켜기로 정했다(`D3`). 같은 설명을 반복하고 있다는 것이
+   관측되면 그때 켠다
+2. `decisions/README.md` — 결정 10개를 넘으면. 지금 넷이다
+3. Go·Rust 게이트 — 툴체인이 생기면. **미검증은 넣지 않는다**
 
 ## 막힌 것 · 미확인
 
 - **실제 Gradle·tsc 미검증.** 스텁으로 태스크 분기와 종료 코드까지는 봤다.
   Gradle 데몬과 tsc 의 실제 판정은 못 봤다 — `verify` 가 매번 찍는다
+- **`/harness-init` 은 아직 안 돌았다.** 스킬은 회귀로 검증할 수 없다 —
+  첫 실제 온보딩이 판정이다

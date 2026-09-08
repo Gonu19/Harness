@@ -685,6 +685,43 @@ function verifyApplyTemplate() {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+
+  // --- `--with` ----------------------------------------------------------
+  const opt = mkdtempSync(join(tmpdir(), 'harness-with-'));
+  try {
+    writeFileSync(join(opt, '.gitignore'), 'node_modules/\n');
+    const r = runScript(script, [opt, '--with', 'old,reference']);
+    record(A, '--with old,reference → 두 인덱스가 생긴다', 'pass',
+      r.code === 0 && existsSync(join(opt, 'old/README.md')) && existsSync(join(opt, 'Reference/README.md')),
+      `exit=${r.code}`);
+
+    // Reference 만 gitignore 에 들어간다. old 는 git 에 남아야 옮긴 흔적이 diff 로 보인다.
+    const ig = readFileSync(join(opt, '.gitignore'), 'utf8');
+    record(A, 'Reference 만 gitignore 에 들어간다', 'pass',
+      ig.includes('Reference/*') && ig.includes('!Reference/README.md') && !/^old\//m.test(ig), ig);
+
+    // **기존 줄을 지우지 않는다.** 덧붙이기만 해야 한다.
+    record(A, '기존 .gitignore 줄을 지우지 않는다', 'block',
+      ig.includes('node_modules/'), ig);
+
+    // 두 번째 실행이 같은 줄을 또 붙이면 파일이 무한히 자란다.
+    runScript(script, [opt, '--with', 'old,reference']);
+    const twice = readFileSync(join(opt, '.gitignore'), 'utf8');
+    record(A, '두 번 돌려도 gitignore 가 안 늘어난다', 'block', twice === ig, twice);
+
+    // --with 없이는 만들지 않는다 — 빈 인덱스 표는 "안 봤다"와 "볼 게 없다"를 섞는다.
+    const bare = mkdtempSync(join(tmpdir(), 'harness-nowith-'));
+    runScript(script, [bare]);
+    record(A, '--with 없으면 old/·Reference/ 를 만들지 않는다', 'block',
+      !existsSync(join(bare, 'old')) && !existsSync(join(bare, 'Reference')), '');
+    rmSync(bare, { recursive: true, force: true });
+
+    const bad = runScript(script, [opt, '--with', 'nope']);
+    record(A, '모르는 --with 값 → exit 2', 'block',
+      bad.code === 2 && bad.err.includes('모르는 값'), `exit=${bad.code}`);
+  } finally {
+    rmSync(opt, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------

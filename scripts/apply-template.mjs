@@ -2,11 +2,17 @@
 /**
  * 템플릿을 대상 프로젝트에 놓는다.
  *
- *   node scripts/apply-template.mjs <프로젝트 경로> [--dry-run]
+ *   node scripts/apply-template.mjs <프로젝트 경로> [--with old,reference] [--dry-run]
  *
  *   exit 0  전부 놓였거나 이미 같다
  *   exit 1  기존 파일과 달라서 놓지 못한 것이 있다
  *   exit 2  대상이 없다 · 템플릿을 읽지 못했다
+ *
+ * ## `--with` 가 기본이 아닌 이유
+ *
+ * `old/`(과거 기획)와 `Reference/`(외부 재료)는 있는 프로젝트에만 있다.
+ * 빈 폴더에 안 쓸 디렉터리를 만들면 그것도 소음이고, 빈 인덱스 표는
+ * **"아직 안 봤다" 와 "볼 게 없다" 를 구별하지 못하게** 만든다.
  *
  * ## 왜 스크립트인가 — 손으로 복사하면 완료 형태가 사람 기억에만 남는다
  *
@@ -42,7 +48,7 @@ const TPL = join(REPO, 'template');
  *
  * `when` 이 있는 항목은 조건부다 — 없는 것이 정상이라 완료 판정에 넣지 않는다.
  */
-const FILES = [
+const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 내용은 바뀐다.
   { from: 'AGENTS.md.tpl', to: 'AGENTS.md', what: '규칙의 진본' },
   { from: 'CLAUDE.md.tpl', to: 'CLAUDE.md', what: 'Claude Code 포인터' },
   { from: 'GEMINI.md.tpl', to: 'GEMINI.md', what: 'Gemini·Antigravity 포인터' },
@@ -65,12 +71,51 @@ const OMITTED = [
   ['template/.claude/settings.json.tpl', '사용자 전역(~/.claude/settings.json)에 사람이 한 번 건다'],
 ];
 
+/**
+ * 선택 디렉터리. 성격이 달라서 규약도 다르다 — 한 옵션으로 묶지 않는다.
+ *
+ *   old/       이 프로젝트의 **과거**. 옮기고 **지운다**. git 에 넣는다
+ *              (무엇을 옮기고 지웠는지가 diff 로 남아야 하므로)
+ *   Reference/ **외부** 재료. 계속 둔다. git 에서 **뺀다**
+ *              (남의 산물·이미지가 저장소를 부풀리고 저작권이 딸려 온다)
+ *              단 인덱스(`README.md`)만은 커밋한다 — 무엇을 보고 정했는지는 남아야 한다
+ */
+const OPTIONAL = {
+  old: { from: 'old/README.md.tpl', to: 'old/README.md', what: '과거 기획 — 옮기고 지운다', ignore: null },
+  reference: { from: 'Reference/README.md.tpl', to: 'Reference/README.md', what: '외부 재료 — 재료지 근거가 아니다',
+               ignore: 'Reference/*\n!Reference/README.md' },
+};
+
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
-const target = resolve(args.find((a) => !a.startsWith('--')) ?? '');
 
-if (!args.find((a) => !a.startsWith('--'))) {
-  console.error('사용법: node scripts/apply-template.mjs <프로젝트 경로> [--dry-run]');
+// `--with old,reference` 와 `--with=old,reference` 를 둘 다 받는다.
+//
+// **떨어진 형태의 값 위치를 인덱스로 들고 간다.** 값으로 비교하면 안 된다 —
+// `--with` 가 아예 없을 때 `indexOf(undefined)` 가 -1 이 되고, `args[-1+1]` 이
+// **첫 인자(= 대상 경로)를 가리켜서 그것이 걸러진다.** 회귀가 잡은 버그다.
+let withValue = '';
+let valueIndex = -1;
+const withIndex = args.findIndex((a) => a === '--with' || a.startsWith('--with='));
+if (withIndex >= 0) {
+  const a = args[withIndex];
+  if (a.startsWith('--with=')) withValue = a.slice('--with='.length);
+  else { valueIndex = withIndex + 1; withValue = args[valueIndex] ?? ''; }
+}
+const withList = withValue.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+const unknown = withList.filter((w) => !(w in OPTIONAL));
+if (unknown.length > 0) {
+  console.error(`--with 에 모르는 값: ${unknown.join(', ')}\n쓸 수 있는 것: ${Object.keys(OPTIONAL).join(', ')}`);
+  process.exit(2);
+}
+for (const w of withList) FILES.push(OPTIONAL[w]);
+
+const positional = args.filter((a, i) => !a.startsWith('--') && i !== valueIndex);
+const target = resolve(positional[0] ?? '');
+
+if (!positional[0]) {
+  console.error('사용법: node scripts/apply-template.mjs <프로젝트 경로> [--with old,reference] [--dry-run]');
   process.exit(2);
 }
 if (!existsSync(target)) {
@@ -117,7 +162,30 @@ for (const { from, to, what } of FILES) {
   placed += 1;
 }
 
-console.log(`\n${dryRun ? '놓을 것' : '놓음'} ${placed} · 이미 같음 ${same} · 거부 ${refused.length}`);
+// --- .gitignore — **덧붙이기만 한다** ---------------------------------------
+//
+// 기존 파일을 덮지 않는다는 규칙은 여기서도 지킨다. 줄을 더하기만 하고
+// 아무것도 지우지 않는다. 그래서 별도 범주로 보고한다 — "놓았다" 와
+// "남의 파일에 손댔다" 는 읽는 사람에게 다른 사실이다.
+const ignores = withList.map((w) => OPTIONAL[w].ignore).filter(Boolean);
+let appended = 0;
+if (ignores.length > 0) {
+  const path = join(target, '.gitignore');
+  const current = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  const need = ignores.join('\n').split('\n').filter((line) => !current.split('\n').includes(line));
+  if (need.length > 0) {
+    if (!dryRun) {
+      const body = (current && !current.endsWith('\n') ? `${current}\n` : current)
+        + `${current ? '\n' : ''}# harness — 외부 재료는 버전관리 밖에 둔다 (인덱스만 커밋)\n${need.join('\n')}\n`;
+      writeFileSync(path, body, 'utf8');
+    }
+    console.log(`  ${dryRun ? '덧붙일것' : '덧붙임'}  .gitignore  ← ${need.join(' · ')}`);
+    appended = need.length;
+  }
+}
+
+console.log(`\n${dryRun ? '놓을 것' : '놓음'} ${placed} · 이미 같음 ${same} · 거부 ${refused.length}` +
+            (ignores.length > 0 ? ` · .gitignore 덧붙임 ${appended}줄` : ''));
 
 console.log('\n일부러 놓지 않는 것 —');
 for (const [f, why] of OMITTED) console.log(`  · ${f}\n      ${why}`);
