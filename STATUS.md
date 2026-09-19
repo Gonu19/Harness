@@ -2,7 +2,7 @@
 > **읽을 때:** 세션 시작 직후
 > **크기:** 3KB 이하. 넘으면 `.claude/rules/` 나 `decisions/` 로 갈 때가 된 것이다
 
-# 지금 상태 (2026-09-09)
+# 지금 상태 (2026-09-20)
 
 ## 구조
 
@@ -13,20 +13,17 @@
 `adapters/claude-code/` 는 Claude Code 에서만 돌지만 **우회 수단이 없다.**
 `adapters/git/` 은 어느 에이전트든 돌지만 `--no-verify` 로 뚫린다. 상보다.
 
-## 되는 것 — 89건 회귀로 검증됨
+## 되는 것 — 95건 회귀로 검증됨
 
 | 게이트 | 도구 계층 | git 계층 |
 |---|---|---|
 | `guard-migrations` | Write/Edit/Bash | `pre-commit` |
 | `commit-checklist` | Bash 가로채기 | `commit-msg` |
-| `edit-check` | Java `compileJava`/`compileTestJava` · TS `tsc` · Py `ast.parse`/mypy | 없다(느려서 값을 잃는다) |
-
-Python 은 스텁 없이 실제 인터프리터로 검증했다. 바닥이 구문 검사인 이유는
-**거짓 차단이 원리적으로 없는 유일한 검사**라서다 — mypy 는 선언한 곳만.
+| `edit-check` | Java · TS `tsc` · Py `ast.parse`/mypy | 없다(느려서 값을 잃는다) |
 
 `claudeMdExcludes` 는 **사용자 스코프에도 먹는다**(0a 분기 A). `session-log` 발화도 봤다.
 
-## 이식 — 명령 셋 + 온보딩 스킬
+## 이식 — 명령 셋 + `/harness-init`
 
 ```bash
 node scripts/apply-template.mjs <프로젝트> [--with old,reference]
@@ -34,24 +31,27 @@ node adapters/git/install.mjs   <프로젝트>
 node scripts/gates-report.mjs   <프로젝트>   # ← exit 0 이어야 끝
 ```
 
-빈 저장소에 끝까지 돌려 확인했고 **둘 다 회귀에 있다** — "놓았다"·"게이트가
-산다" 는 주장을 검증하는 것이 없었다. `gates-report` 쪽은 **가짜 홈**으로
-훅 등록 상태를 통제한다(안 그러면 환경 보고다).
+**스크립트가 놓고 스킬이 채운다**(`D4`). 절차는 `docs/이식-절차.md`.
+세 스크립트 다 회귀에 있다.
 
-빈 프로젝트는 `/harness-init` 이 위 셋을 부르고 그 세션에서 문서를 채운다.
-**스크립트가 놓고 스킬이 채운다**(`D4`) — 스킬은 검증 가능한 산출물을 못 내므로
-**산출물 쪽에 판정을 걸었다**: `STATUS` 「도는 것」은 채우지 않고, `RUNBOOK`
-명령은 한 번씩 실제로 돌린다.
+## 기획 단계 — 구역 셋, 닫을 때만 게이트
 
-`--with` 는 선택. `old/` 는 과거 기획(옮기고 지운다 · git 에 넣는다),
-`Reference/` 는 외부 재료(git 에서 빼고 인덱스만). **재료지 근거가 아니다.**
+```
+docs/ ──①──▶ decisions/OPEN.md ──②──▶ decisions/D<n>
+ 탐색(자유)        열림                    닫힘
+```
+
+**①은 자유, ②에만 건다.** `decisions/` 가 바뀌는데 `OPEN.md` 가 그 커밋에
+없으면 막는다 — `STATUS.md` 동반 규칙과 같은 모양이고 **열쇠말을 안 쓴다**
+(diff 사실로만 판정하니 반사적으로 찍을 칸이 없다).
+
+`OPEN.md` 의 3KB 한도가 **셈이다** — 넘치면 넓히기만 하고 고르지 않는 것.
+`harness-gates.json` 에 `phase: "planning"` 을 선언하면 `gates-report` 가
+코드 게이트를 「해당 없음」으로 놓고 기획 지표를 보여 준다.
 
 ## 다음 — 전부 조건부다
 
-1. **CL v2** — 안 켜기로 정했다(`D3`). 같은 설명을 반복하고 있다는 것이
-   관측되면 그때 켠다
-2. `decisions/README.md` — 결정 10개를 넘으면. 지금 넷이다
-3. Go·Rust 게이트 — 툴체인이 생기면. **미검증은 넣지 않는다**
+`decisions/OPEN.md` 참조. 셋 다 조건이 성립해야 움직인다.
 
 ## 막힌 것 · 미확인
 

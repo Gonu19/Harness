@@ -74,6 +74,58 @@ const declared = (() => {
 })();
 const noBuildDeclared = declared.stack === 'none';
 
+/**
+ * 기획 단계 선언. `stack: "none"` 과 **같은 자리·같은 발상**이다 —
+ * 사람이 정한 것과 도구가 못 찾은 것을 구별한다.
+ *
+ *   .claude/harness-gates.json  →  { "phase": "planning" }
+ *
+ * 코드가 생기면 이 줄을 지운다. 그러면 표가 원래대로 돌아온다.
+ */
+const planning = declared.phase === 'planning';
+
+/**
+ * 미결 등록부를 읽는다.
+ *
+ * **못 읽은 것과 비어 있는 것을 가른다.** "0개" 와 "못 읽었다" 가 같은 출력으로
+ * 나가면 표를 믿을 수 없다 — 이 저장소가 종료 코드에서 없앤 혼동과 같은 것이다.
+ */
+function readOpenLedger(root) {
+  const path = join(root, 'decisions', 'OPEN.md');
+  if (!existsSync(path)) return { missing: true };
+
+  let text;
+  try { text = readFileSync(path, 'utf8'); }
+  catch (error) { return { error: String(error) }; }
+
+  // 표 본문만 센다. 구분선(`|---`)·헤더·자리표시자는 뺀다.
+  const rows = text.split('\n')
+    .filter((l) => l.trim().startsWith('|'))
+    .map((l) => l.split('|').map((c) => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1))
+    .filter((cells) => cells.length >= 2)
+    .filter((cells) => !/^-+$/.test(cells[0] ?? ''))
+    .filter((cells) => cells[0] && cells[0] !== '질문' && !/^<.*>$/.test(cells[0]));
+
+  const today = Date.now();
+  const ages = rows
+    .map((cells) => cells[cells.length - 1])
+    .map((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) ? Math.floor((today - Date.parse(d)) / 86400000) : null)
+    .filter((n) => n !== null && Number.isFinite(n));
+
+  return { open: rows.length, oldest: ages.length ? Math.max(...ages) : null, dated: ages.length };
+}
+
+/** 닫힌 결정 수. `_`·`README` 로 시작하는 것은 결정이 아니다. */
+function countDecisions(root) {
+  const dir = join(root, 'decisions');
+  if (!existsSync(dir)) return null;
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'OPEN.md' && !f.startsWith('_'))
+      .length;
+  } catch { return null; }
+}
+
 const hasMigrations = existsSync(join(target, 'src', 'main', 'resources', 'db', 'migration'))
   || dirHas(target, /db[\\/]migration/);
 
@@ -192,10 +244,13 @@ const gates = [
     // 이 명령은 자기가 드러내려던 침묵을 자기가 만든다.
     name: '컴파일/타입 검사',
     what: '편집 직후 컴파일 (구현: compile-check · Java/Gradle 전용)',
-    applies: !noBuildDeclared,
+    // 기획 단계에는 검사할 코드가 없다. **막는 게 아니라 해당하지 않는 것**이다.
+    applies: !noBuildDeclared && !planning,
     agent: implemented.some((i) => stacks.some((s) => s.id === i.id)) && registered.has('edit-check'),
     git: null,   // 일부러 없다 — 커밋 시점 컴파일은 값을 잃고 커밋을 붙잡는다
-    note: noBuildDeclared
+    note: planning
+      ? '.claude/harness-gates.json 에 phase:planning 이 선언돼 있다 — 사람이 정한 것이다'
+      : noBuildDeclared
       ? '.claude/harness-gates.json 에 stack:none 이 선언돼 있다 — 사람이 정한 것이다'
       : stacks.length === 0
         ? '**스택을 알아보지 못했다.** 빌드가 없는 저장소면 .claude/harness-gates.json 에 {"stack":"none"} 을 적어라'
@@ -225,6 +280,28 @@ for (const g of gates) {
   if (g.note) console.log(`    ${g.note}`);
 }
 
+// --- 기획 지표 — 막지 않는다. 보여 준다 ------------------------------------
+//
+// 나이가 나쁜지는 도구가 모른다. 며칠이 긴지는 프로젝트마다 다르고, 도구가
+// 정하면 그건 거짓 수렴이다. **세어서 보여 주고 판단은 사람이 한다.**
+const ledger = planning ? readOpenLedger(target) : null;
+if (planning) {
+  console.log('\n기획 지표 — 판단은 사람이 한다');
+  if (ledger.missing) {
+    console.log('  ✗ decisions/OPEN.md 가 없다 — 미결을 담을 그릇이 없다');
+  } else if (ledger.error) {
+    console.log(`  ✗ decisions/OPEN.md 를 읽지 못했다 — **없는 것과 다른 사실이다**\n      ${ledger.error}`);
+  } else {
+    const closedCount = countDecisions(target);
+    console.log(`  열린 질문      ${ledger.open}개`);
+    console.log(`  가장 오래된 것  ${ledger.oldest === null ? '(날짜를 읽은 항목이 없다)' : `${ledger.oldest}일`}`);
+    if (ledger.dated < ledger.open) {
+      console.log(`      ${ledger.open - ledger.dated}개는 날짜가 YYYY-MM-DD 가 아니라 나이를 못 센다`);
+    }
+    console.log(`  닫힌 결정      ${closedCount === null ? '(못 읽음)' : `${closedCount}개`}`);
+  }
+}
+
 console.log('\n문서 포인터 — 다른 하네스가 규칙을 찾아가는 길');
 for (const [k, v] of Object.entries(docs)) console.log(`  ${v ? '○' : '✗'} ${k}`);
 
@@ -245,6 +322,16 @@ if (declared.broken) {
 `);
   process.exit(2);
 }
+// 기획 단계인데 그릇이 없으면 결손이다. 나이는 알림이지 실패가 아니다.
+if (planning && ledger?.missing) {
+  console.error(
+    '\n기획 단계로 선언됐는데 `decisions/OPEN.md` 가 없다.\n' +
+    '미결이 대화 속에만 남고, 세션이 끝나면 사라진다.\n' +
+    `  node <하네스>/scripts/apply-template.mjs ${target}\n`
+  );
+  process.exit(1);
+}
+if (planning && ledger?.error) process.exit(2);
 if (settingsErrors.length > 0) process.exit(2);
 if (dead.length > 0) {
   console.error(`해당하는데 살아 있지 않은 게이트 ${dead.length}건: ${dead.map((g) => g.name).join(', ')}\n`);

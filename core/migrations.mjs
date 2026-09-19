@@ -22,7 +22,7 @@
  * 훅이 다 막는 척하는 것이 더 위험하다.
  */
 import { skip, block, cannot } from './verdict.mjs';
-import { git } from './git.mjs';
+import { git, gitNameStatus } from './git.mjs';
 import { findRoot, relPosix } from './project.mjs';
 
 /** 마이그레이션 파일로 보는 경로. Flyway 의 표준 배치를 따른다. */
@@ -91,15 +91,14 @@ export function checkShellCommand(command) {
  * HEAD 에 있던 것을 건드렸는가.
  */
 export function checkStagedIndex(root) {
-  const r = git(root, ['diff', '--cached', '--name-status', '--diff-filter=MDR']);
+  // `-z` 로 받는다. 기본 출력은 비ASCII 경로를 따옴표로 감싸 이스케이프해서,
+  // 한글이 섞인 마이그레이션 경로면 이 게이트가 통째로 빗나간다.
+  const r = gitNameStatus(root, ['diff', '--cached', '--name-status', '--diff-filter=MDR']);
   if (!r.ok) return cannot('스테이징 목록을 읽지 못했다', r.reason);
 
-  const hits = r.stdout.split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.split(/\t/))
-    .filter(([status, path]) => status && path && MIGRATION.test(path))
-    .map(([status, path]) => `${status}\t${path}`);
+  const hits = r.entries
+    .filter(({ path }) => path && MIGRATION.test(path))
+    .map(({ status, path }) => `${status}\t${path}`);
 
   if (hits.length === 0) return skip('수정된 마이그레이션이 없다');
 

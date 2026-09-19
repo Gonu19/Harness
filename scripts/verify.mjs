@@ -248,6 +248,54 @@ function verifyCommit(fx) {
   git(fx.root, ['checkout', '-q', 'HEAD', '--', 'STATUS.md']);
   rmSync(join(fx.root, '.claude'), { recursive: true, force: true });
 
+  // --- 한글 경로 --------------------------------------------------------
+  //
+  // git 은 비ASCII 경로를 기본으로 따옴표로 감싸 8진 이스케이프해서 내보낸다.
+  // 그대로 받으면 `^src/` 같은 접두사 판정이 **전부 빗나가고, 게이트가 통째로
+  // 조용히 빠진다.** 실측으로 걸린 구멍이라 양쪽에 사례를 둔다.
+  fx.w('src/main/java/한글.java', 'class 한글 {}\n');
+  git(fx.root, ['add', '-A']);
+  expect(C, '한글 경로도 src 로 인식한다 → 게이트가 켜진다', 'block', 2,
+    bash('git commit -m "한글 파일 추가"'), '커밋 전 확인이 끝나지 않았다');
+
+  fx.w('STATUS.md', '# 상태\n\n한글\n');
+  git(fx.root, ['add', '-A']);
+  expect(C, '한글 경로 + 열쇠말 + STATUS → 통과', 'pass', 0,
+    bash('git commit -m "고침\n\n규모: 작다\n경로: 하나뿐"'));
+
+  git(fx.root, ['reset', '-q']);
+  rmSync(join(fx.root, 'src/main/java/한글.java'), { force: true });
+  git(fx.root, ['checkout', '-q', 'HEAD', '--', 'STATUS.md']);
+
+  // --- 미결 등록부 동반 규칙 --------------------------------------------
+  fx.w('decisions/OPEN.md', '# 열린 질문\n\n| 질문 | 기울기 | 닫는 조건 | 연 날짜 |\n|---|---|---|---|\n');
+  fx.w('decisions/D1_한글-결정-파일-이름.md', '## D1\n');
+  git(fx.root, ['add', 'decisions/D1_한글-결정-파일-이름.md']);
+  expect(C, '결정만 바뀌고 OPEN 미동반 → 차단', 'block', 2,
+    bash('git commit -m "D1"'), 'OPEN.md');
+
+  // 짝 — OPEN 을 같이 고치면 통과한다.
+  fx.w('decisions/OPEN.md', '# 열린 질문\n\n(비었다)\n');
+  git(fx.root, ['add', 'decisions/OPEN.md']);
+  expect(C, '결정 + OPEN 동반 → 통과', 'pass', 0, bash('git commit -m "D1 + OPEN"'));
+
+  // 여는 것은 자유다 — OPEN 만 바뀌면 걸리지 않는다.
+  git(fx.root, ['reset', '-q']);
+  fx.w('decisions/OPEN.md', '# 열린 질문\n\n- 새 질문\n');
+  git(fx.root, ['add', 'decisions/OPEN.md']);
+  expect(C, 'OPEN 만 바뀌면 → 소관 아님 (여는 건 자유)', 'pass', 0,
+    bash('git commit -m "미결 염"'));
+
+  // 서식은 결정이 아니다.
+  git(fx.root, ['reset', '-q']);
+  fx.w('decisions/_template.md', '서식\n');
+  git(fx.root, ['add', 'decisions/_template.md']);
+  expect(C, '_template.md 는 결정이 아니다 → 통과', 'pass', 0,
+    bash('git commit -m "서식"'));
+
+  git(fx.root, ['reset', '-q']);
+  rmSync(join(fx.root, 'decisions'), { recursive: true, force: true });
+
   // 예산 초과. 인덱스 기준이어야 한다 — 워킹트리를 재면 스테이지에서 뺀 초과분이 샌다.
   git(fx.root, ['reset', '-q']);
   fx.w('.claude/harness-budgets.json', JSON.stringify({ 'STATUS.md': 64 }));

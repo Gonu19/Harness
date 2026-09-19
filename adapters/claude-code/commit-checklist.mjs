@@ -18,7 +18,7 @@
 import { readStdin, parseInput, notMine, emit, cannotCheck, guard } from './hook-io.mjs';
 import { findCommitInvocation, commitMessage, stagesWorkingTree } from './git-command.mjs';
 import { checkCommit } from '../../core/commit.mjs';
-import { gitLines, topLevel } from '../../core/git.mjs';
+import { gitPaths, topLevel } from '../../core/git.mjs';
 
 await guard('commit-checklist', async () => {
   const input = parseInput(await readStdin(), 'commit-checklist');
@@ -50,14 +50,15 @@ await guard('commit-checklist', async () => {
  * 옵션 값을 건너뛰는 이유다.
  */
 function changedFiles(root, invocation) {
-  const staged = lines(root, ['diff', '--cached', '--name-only']);
+  const staged = paths(root, ['diff', '--cached', '--name-only']);
   if (!stagesWorkingTree(invocation.tokens, invocation.rest)) return staged;
-  return [...new Set([...staged, ...lines(root, ['diff', '--name-only'])])];
+  return [...new Set([...staged, ...paths(root, ['diff', '--name-only'])])];
 }
 
-function lines(root, args) {
-  const r = gitLines(root, args);
+/** `gitPaths` 는 `-z` 를 쓴다. 한글 경로가 따옴표로 감싸여 판정이 빗나가는 것을 막는다. */
+function paths(root, args) {
+  const r = gitPaths(root, args);
   // 판정 불가는 통과가 아니다.
   if (!r.ok) cannotCheck('git diff 를 읽지 못했다', r.reason);
-  return r.lines;
+  return r.paths;
 }

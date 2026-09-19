@@ -29,7 +29,14 @@ export const KEYS = [
   { key: '경로:', question: '이 단언이 검증 대상 말고 다른 경로로도 만족되는가?' },
 ];
 
-const DEFAULT_BUDGETS = { 'AGENTS.md': 6144, 'STATUS.md': 3072, 'RUNBOOK.md': 3072 };
+const DEFAULT_BUDGETS = {
+  'AGENTS.md': 6144,
+  'STATUS.md': 3072,
+  'RUNBOOK.md': 3072,
+  // 미결 등록부에 한도를 거는 것이 **셈이다.** 표가 넘치면 그 순간이
+  // "넓히기만 하고 고르지 않고 있다" 는 신호다. 별도 린터가 필요 없다.
+  'decisions/OPEN.md': 3072,
+};
 
 /**
  * 문서 크기 예산. 프로젝트가 `.claude/harness-budgets.json` 으로 덮어쓸 수 있다.
@@ -110,9 +117,17 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
   const budget = checkBudgets(root, changed);
   if (budget.verdict === 'cannot') return budget;
 
+  // 미결 등록부도 **소스 변경 여부와 무관하게** 본다. 결정이 닫히는 커밋에는
+  // 대개 `src/` 가 없다 — 기획 단계라면 아예 없다.
+  const ledger = checkOpenLedger(root, changed);
+
+  const alwaysOn = [...(budget.verdict === 'block' ? budget.items : []), ...ledger];
+
   const touchesSource = changed.some((f) => /^src\//.test(f));
   if (!touchesSource) {
-    return budget.verdict === 'block' ? budget : skip('문서만 바뀌는 커밋이다');
+    return alwaysOn.length > 0
+      ? block(render({ missing: [], facts: alwaysOn, notices: [], changed }))
+      : skip('문서만 바뀌는 커밋이다');
   }
 
   if (message === null) {
@@ -150,7 +165,7 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
     );
   }
 
-  if (budget.verdict === 'block') facts.push(...budget.items);
+  facts.push(...alwaysOn);
 
   if (missing.length === 0 && facts.length === 0) return skip('확인할 것이 남지 않았다');
 
@@ -186,6 +201,51 @@ function checkBudgets(root, changed) {
     );
   }
   return items.length > 0 ? { verdict: 'block', items, reason: render({ missing: [], facts: items, notices: [], changed }) } : skip();
+}
+
+/**
+ * 결정이 닫히는 커밋에 **미결 등록부가 같이 오는가.**
+ *
+ * `STATUS.md` 동반 규칙과 **같은 모양**이다 — 열쇠말을 요구하지 않고
+ * **diff 사실로만** 판정한다. 적을 말이 없으니 반사적으로 찍을 칸도 없다.
+ *
+ * ## 왜 이 전이만 잡는가
+ *
+ * 기획에는 구역이 셋이고 전이가 둘이다:
+ *
+ *   docs/ 에 쓴다  ──①──▶  OPEN 에 오른다  ──②──▶  D<n> 이 된다
+ *
+ * ①(미결을 **여는** 것)은 자유다. 여는 걸 막으면 탐색이 죽고, 그건
+ * 제2원칙(거짓 차단) 위반이다. ②(**닫는** 것)만 잡는다 — 거기가
+ * "안 정한 것이 정한 것처럼 되는" 지점이기 때문이다.
+ *
+ * ## `OPEN.md` 가 없으면 걸지 않는다
+ *
+ * `STATUS.md` 규칙과 같다. 파일이 없는 저장소는 이 규약을 아직 안 쓰는
+ * 것이므로 강요하지 않는다. **그릇이 있는지는 `gates-report` 가 본다** —
+ * 거기가 "없다" 를 말할 자리고, 여기는 아니다.
+ */
+function checkOpenLedger(root, changed) {
+  const OPEN = 'decisions/OPEN.md';
+  if (!existsSync(join(root, OPEN))) return [];
+
+  // `_template.md` · `README.md` 는 결정이 아니다. 서식과 라우팅 표다.
+  const closed = changed.filter((f) =>
+    /^decisions\//.test(f)
+    && f !== OPEN
+    && f !== 'decisions/README.md'
+    && !/^decisions\/_/.test(f));
+
+  if (closed.length === 0) return [];
+  if (changed.includes(OPEN)) return [];
+
+  return [
+    `\`${OPEN}\` 가 이 커밋에 없다. 결정이 바뀌는데 **열린 질문은 그대로다.**\n` +
+    `  바뀌는 결정: ${closed.join(', ')}\n` +
+    '  닫혔으면 `OPEN.md` 에서 그 줄을 지워라. **닫힌 것을 두 곳에 두지 않는다.**\n' +
+    '  OPEN 을 거치지 않고 바로 정한 것이면 `OPEN.md` 의 「OPEN 을 거치지 않은\n' +
+    '  결정」에 한 줄 적어라 — 나쁜 게 아니라 **보여야** 하는 것이다.',
+  ];
 }
 
 function render({ missing, facts, notices, changed }) {

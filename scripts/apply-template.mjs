@@ -60,6 +60,7 @@ const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 �
   { from: '.claude/harness-budgets.json', to: '.claude/harness-budgets.json', what: '문서 예산' },
   { from: '.claude/settings.local.json.tpl', to: '.claude/settings.local.json', what: '모델·규칙 제외' },
   { from: 'decisions/_template.md', to: 'decisions/_template.md', what: '결정 서식' },
+  { from: 'decisions/OPEN.md.tpl', to: 'decisions/OPEN.md', what: '미결 등록부 — 열린 질문' },
 ];
 
 /**

@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs';
 import { emitGit, guardGit } from './emit.mjs';
 import { checkCommit } from '../../core/commit.mjs';
-import { gitLines, topLevel } from '../../core/git.mjs';
+import { gitPaths, topLevel } from '../../core/git.mjs';
 
 await guardGit('commit-msg', async () => {
   const messagePath = process.argv[2];
@@ -47,10 +47,12 @@ await guardGit('commit-msg', async () => {
   // 커밋에 안 남는데 통과하게 되므로 미리 지운다.
   const body = message.split('\n').filter((l) => !l.startsWith('#')).join('\n');
 
-  const staged = gitLines(root, ['diff', '--cached', '--name-only']);
+  // `-z` 로 받는다. 기본 출력은 비ASCII 경로를 따옴표로 감싸 이스케이프해서,
+  // 한글 파일명이면 경로 판정이 통째로 빗나간다.
+  const staged = gitPaths(root, ['diff', '--cached', '--name-only']);
   if (!staged.ok) {
     emitGit({ verdict: 'cannot', what: '스테이징 목록을 읽지 못했다', detail: staged.reason }, 'commit-msg');
   }
 
-  emitGit(checkCommit({ root, message: body, changed: staged.lines }), 'commit-msg');
+  emitGit(checkCommit({ root, message: body, changed: staged.paths }), 'commit-msg');
 });
