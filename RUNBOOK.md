@@ -20,7 +20,7 @@ node scripts/budget.mjs <저장소>          # 문서가 한도 안인가 (쓰�
 
 ```bash
 echo '{"tool_name":"Edit","tool_input":{"file_path":"<경로>"}}' \
-  | node adapters/claude-code/compile-check.mjs; echo "exit=$?"
+  | node adapters/claude-code/edit-check.mjs; echo "exit=$?"
 ```
 
 `0` 소관 아님/통과 · `2` 차단 또는 판정 불가. `2` 일 때 stdout 의 JSON
