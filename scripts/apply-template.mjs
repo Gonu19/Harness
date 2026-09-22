@@ -53,6 +53,8 @@ const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 �
   { from: 'CLAUDE.md.tpl', to: 'CLAUDE.md', what: 'Claude Code 포인터' },
   { from: 'GEMINI.md.tpl', to: 'GEMINI.md', what: 'Gemini·Antigravity 포인터' },
   { from: 'STATUS.md.tpl', to: 'STATUS.md', what: '지금 상태' },
+  { from: 'PRD.md.tpl', to: 'PRD.md', what: '무엇을 왜 — 요구·품질 목표·제약의 원천' },
+  { from: 'ARCHITECTURE.md.tpl', to: 'ARCHITECTURE.md', what: '지금 구조 — C4 L1·L2' },
   { from: 'RUNBOOK.md.tpl', to: 'RUNBOOK.md', what: '명령' },
   { from: '.cursor/rules/harness.mdc.tpl', to: '.cursor/rules/harness.mdc', what: 'Cursor 포인터' },
   { from: '.claude/rules/decisions.md.tpl', to: '.claude/rules/decisions.md', what: '조건부 규칙 — 문서' },

@@ -18,7 +18,7 @@
 `adapters/claude-code/` 는 Claude Code 에서만 돌지만 **우회 수단이 없다.**
 `adapters/git/` 은 어느 에이전트든 돌지만 `--no-verify` 로 뚫린다. 상보다.
 
-## 되는 것 — 110건 회귀로 검증됨
+## 되는 것 — 125건 회귀로 검증됨
 
 | 게이트 | 도구 계층 | git 계층 |
 |---|---|---|
@@ -29,15 +29,9 @@
 
 `claudeMdExcludes` 는 **사용자 스코프에도 먹는다**(0a 분기 A). `session-log` 발화도 봤다.
 
-## 이식 — 명령 셋 + `/harness-init`
+## 이식 — `apply-template` · `install` · `gates-report` + `/harness-init`
 
-```bash
-node scripts/apply-template.mjs <프로젝트> [--with old,reference]
-node adapters/git/install.mjs   <프로젝트>
-node scripts/gates-report.mjs   <프로젝트>   # ← exit 0 이어야 끝
-```
-
-**스크립트가 놓고 스킬이 채운다**(`D4`). 절차는 `docs/이식-절차.md`.
+**스크립트가 놓고 스킬이 채운다**(`D4`). 명령과 절차는 `docs/이식-절차.md`.
 세 스크립트 다 회귀에 있다.
 
 ## 애자일 — 단계가 아니라 바퀴
@@ -49,10 +43,15 @@ node scripts/gates-report.mjs   <프로젝트>   # ← exit 0 이어야 끝
 `phase` 는 없앴다(워터폴). 게이트는 경로로 켜지고 `gates-report` 는 **활동**
 (기획·구현·QA·문서화)으로 줄을 선다. **넷은 한 바퀴다**(`D5`) — 「이번 반복」,
 끝나면 `/harness-retro`. 산출물은 네 곳으로, 서술은 회고 커밋으로.
+첫 회고를 돌렸다(`72c983a`) — 스킬의 첫 실사용.
+
+**구현 전에 `PRD.md`·`ARCHITECTURE.md`(C4 L1·L2)**(`D7`). 칸이 남은 채 첫 `src/`
+커밋이면 막고, 채우면 다시 안 뜬다. 빈 저장소 → 이식 → 첫 구현을 git 훅만으로
+끝에서 끝까지 확인했다.
 
 ## 다음 — 전부 조건부다
 
-`decisions/OPEN.md` 참조. 셋 다 조건이 성립해야 움직인다.
+`decisions/OPEN.md` 참조. 「고르는 중」은 비었고 「조건 대기」 셋뿐이다.
 
 ## 막힌 것 · 미확인
 

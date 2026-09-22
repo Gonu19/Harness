@@ -299,6 +299,42 @@ function verifyCommit(fx) {
   git(fx.root, ['reset', '-q']);
   rmSync(join(fx.root, 'decisions'), { recursive: true, force: true });
 
+  // --- 선행 문서 (D7) ---------------------------------------------------
+  //
+  // 자리표시자가 남은 채 첫 구현을 시작하면 막는다. **채우면 다시는 안 뜬다** —
+  // 그 짝이 없으면 "src 커밋을 항상 막는 게이트" 와 구별되지 않는다.
+  fx.w('PRD.md', '# PRD\n\n## 목표\n\n<채울 것: 문제 한 줄>\n');
+  fx.w('src/main/java/B.java', 'class B {}\n');
+  fx.w('STATUS.md', '# 상태\n\n선행\n');
+  git(fx.root, ['add', 'src/main/java/B.java', 'STATUS.md']);
+  expect(C, 'PRD 에 채울 칸이 남았는데 src 커밋 → 차단', 'block', 2,
+    bash('git commit -m "구현 시작\n\n규모: 작다\n경로: 하나뿐"'), '채우지 않은 칸');
+
+  // 짝 — 채우면 통과하고 다시는 안 뜬다.
+  fx.w('PRD.md', '# PRD\n\n## 목표\n\n한글 이름 검사기\n');
+  expect(C, 'PRD 를 채우면 → 통과', 'pass', 0,
+    bash('git commit -m "구현 시작\n\n규모: 작다\n경로: 하나뿐"'));
+
+  // 템플릿 주석이 표식을 **설명하느라** 언급한다. 그건 채울 칸이 아니다.
+  fx.w('PRD.md', '# PRD\n\n<!-- 「<채울 것: …>」이 남으면 막힌다 -->\n\n## 목표\n\n채웠다\n');
+  expect(C, 'HTML 주석 속 표식은 세지 않는다 → 통과', 'pass', 0,
+    bash('git commit -m "구현\n\n규모: 작다\n경로: 하나뿐"'));
+
+  // 다이어그램도 채워야 한다 — 코드 펜스(Mermaid) 안은 센다.
+  fx.w('ARCHITECTURE.md', '# A\n\n```mermaid\nC4Context\n  System(s, "<채울 것: 이름>")\n```\n');
+  expect(C, 'Mermaid 안의 표식은 센다 → 차단', 'block', 2,
+    bash('git commit -m "구현\n\n규모: 작다\n경로: 하나뿐"'), 'ARCHITECTURE.md');
+
+  // 문서 커밋에는 걸지 않는다 — 기획 중에 PRD 를 반쯤 쓴 채 커밋하는 것은 정상이다.
+  git(fx.root, ['reset', '-q']);
+  git(fx.root, ['add', 'PRD.md', 'ARCHITECTURE.md']);
+  expect(C, '문서만 커밋하면 칸이 남아도 → 통과 (기획 중)', 'pass', 0,
+    bash('git commit -m "PRD 초안"'));
+
+  git(fx.root, ['reset', '-q']);
+  for (const f of ['PRD.md', 'ARCHITECTURE.md', 'src/main/java/B.java']) rmSync(join(fx.root, f), { force: true });
+  git(fx.root, ['checkout', '-q', 'HEAD', '--', 'STATUS.md']);
+
   // 예산 초과. 인덱스 기준이어야 한다 — 워킹트리를 재면 스테이지에서 뺀 초과분이 샌다.
   git(fx.root, ['reset', '-q']);
   fx.w('.claude/harness-budgets.json', JSON.stringify({ 'STATUS.md': 64 }));
@@ -824,6 +860,58 @@ function verifyApplyTemplate() {
 }
 
 // ---------------------------------------------------------------------------
+// 검사 6b — 끝에서 끝까지: 빈 프로젝트 → 이식 → 첫 구현 (D7)
+//
+// 조각별 사례는 다 있다. 그런데 **이어서 한 번에** 도는지는 따로 봐야 한다 —
+// 조각이 다 맞아도 이음매(apply-template 이 놓은 파일을 git 훅이 읽나)에서
+// 끊기면 목표는 안 이뤄진다. 에이전트 없이 **git 훅만으로** 돌린다(PRD Q3).
+// ---------------------------------------------------------------------------
+function verifyEndToEnd() {
+  const E = 'e2e-이식';
+  const root = mkdtempSync(join(tmpdir(), 'harness-e2e-'));
+  const w = (rel, body) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); };
+  try {
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    for (const [k, v] of [['user.email', 'e2e@h.local'], ['user.name', 'e2e'], ['commit.gpgsign', 'false']]) git(root, ['config', k, v]);
+
+    runScript(join(REPO, 'scripts', 'apply-template.mjs'), [root]);
+    runScript(join(REPO, 'adapters', 'git', 'install.mjs'), [root]);
+    record(E, '이식하면 PRD·ARCHITECTURE 가 놓인다', 'pass',
+      existsSync(join(root, 'PRD.md')) && existsSync(join(root, 'ARCHITECTURE.md')), '');
+
+    git(root, ['add', '-A']);
+    const docs = git(root, ['commit', '-q', '-m', '하네스 이식']);
+    record(E, '이식 직후 문서 커밋은 된다 (칸이 남아도)', 'pass', docs.status === 0, docs.stderr);
+
+    // 칸을 안 채우고 구현을 시작한다 → 막혀야 한다.
+    w('src/main/App.java', 'class App {}\n');
+    w('STATUS.md', '# 상태\n\n구현 시작\n');
+    git(root, ['add', '-A']);
+    const early = git(root, ['commit', '-q', '-m', '첫 구현\n\n규모: 작다\n경로: 하나뿐']);
+    record(E, '채우기 전 첫 src 커밋 → 막힌다', 'block',
+      early.status !== 0 && (early.stderr || '').includes('채우지 않은 칸'),
+      `exit=${early.status}\n${(early.stderr || '').slice(0, 300)}`);
+
+    // 칸을 채운다 — 템플릿 표식을 전부 걷어 낸 것으로 친다.
+    for (const f of ['PRD.md', 'ARCHITECTURE.md']) {
+      w(f, readFileSync(join(root, f), 'utf8').replace(/<채울 것[^>]*>/g, '채웠다'));
+    }
+    git(root, ['add', '-A']);
+    const late = git(root, ['commit', '-q', '-m', '첫 구현\n\n규모: 작다\n경로: 하나뿐']);
+    record(E, '채우면 첫 src 커밋 → 통과', 'pass', late.status === 0, `exit=${late.status}\n${late.stderr}`);
+
+    // 그 뒤로는 다시 안 뜬다 — "처음 한 번" 이 정말 한 번인지.
+    w('src/main/App.java', 'class App { int x; }\n');
+    w('STATUS.md', '# 상태\n\n다음\n');
+    git(root, ['add', '-A']);
+    const next = git(root, ['commit', '-q', '-m', '다음 구현\n\n규모: 작다\n경로: 하나뿐']);
+    record(E, '그 뒤 구현 커밋에는 다시 안 뜬다', 'pass', next.status === 0, next.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 검사 7 — gates-report. **"게이트가 산다" 는 주장을 검증한다.**
 //
 // 가짜 홈으로 훅 등록 상태를 통제한다. 안 그러면 이 검사가 "이 기계에 훅이
@@ -852,6 +940,14 @@ function verifyGatesReport() {
       noLedger.code === 1 && noLedger.out.includes('decisions/OPEN.md 가 없다'),
       `exit=${noLedger.code}\n${noLedger.out.slice(-400)}`);
 
+    // 선행 문서가 없으면 구현 전 게이트가 조용히 빠진다 — 그 부재를 말해야 한다.
+    record(G, 'PRD·ARCHITECTURE 가 없으면 선행 문서 행이 ★', 'block',
+      noLedger.out.includes('PRD.md·ARCHITECTURE.md 가 없다'), noLedger.out.slice(-600));
+
+    // 칸이 남은 것은 결손이 아니다(구현 전일 수 있다) — ★ 없이 알려만 준다.
+    writeFileSync(join(root, 'PRD.md'), '# PRD\n\n<채울 것: 목표>\n');
+    writeFileSync(join(root, 'ARCHITECTURE.md'), '# A\n\nL1 채웠다\n');
+
     mkdirSync(join(root, 'decisions'), { recursive: true });
     // 「조건 대기」에 **아주 오래된** 항목을 둔다. 나이 지표가 이걸 세면 안 된다 —
     // 원래 늙어야 하는 항목이 숫자를 차지하면 닫기를 피하는 질문이 묻힌다.
@@ -873,6 +969,9 @@ function verifyGatesReport() {
     record(G, '기획 지표가 선언 없이도 보인다', 'pass',
       alive.out.includes('기획 지표') && alive.out.includes('고르는 중      1개'),
       alive.out.slice(-400));
+
+    record(G, '칸이 남은 선행 문서는 ★ 가 아니라 알림', 'pass',
+      alive.code === 0 && alive.out.includes('채우지 않은 칸: PRD.md 1칸'), alive.out.slice(-600));
 
     record(G, '조건 대기는 따로 세고 나이에 안 들어간다', 'block',
       alive.out.includes('조건 대기      1개') && !alive.out.includes('조건 대기      0개'),
@@ -964,6 +1063,7 @@ try {
   verifyEditRun();
   verifyGitHooks();
   verifyApplyTemplate();
+  verifyEndToEnd();
   verifyGatesReport();
 } finally {
   rmSync(fx.root, { recursive: true, force: true });

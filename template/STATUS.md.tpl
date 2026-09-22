@@ -30,4 +30,5 @@
 ## 이 파일의 규칙
 
 - **커밋할 때 같이 고친다.** 낡으면 없느니만 못하다
-- 여기에는 **상태만** 쓴다. 이유는 `decisions/`, 구조는 `architecture.md`
+- 여기에는 **상태만** 쓴다. 무엇을 왜는 `PRD.md`, 구조는 `ARCHITECTURE.md`,
+  이유는 `decisions/`

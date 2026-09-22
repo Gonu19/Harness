@@ -28,6 +28,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { implemented } from '../core/editcheck.mjs';
+import { UNFILLED } from '../core/commit.mjs';
 
 const target = resolve(process.argv[2] ?? process.cwd());
 
@@ -285,6 +286,18 @@ function dirHas(root, re) {
 // 다 품고 있다. 그래서 그 게이트가 살아 있다는 사실만으로는 **어느 활동이
 // 검사되는지 안 보였다.** 활동으로 줄을 세우면 그게 보인다.
 const commitGate = { agent: registered.has('commit-checklist'), git: gitHooks['commit-msg'] };
+
+// 선행 문서. 판정 규칙(자리표시자 표식)은 커밋 게이트와 **같은 것**을 쓴다 —
+// 두 곳이 다르게 세면 여기서 "채워졌다" 는데 커밋이 막힌다.
+const prereq = { missing: [], unfilled: [] };
+for (const name of ['PRD.md', 'ARCHITECTURE.md']) {
+  const path = join(target, name);
+  if (!existsSync(path)) { prereq.missing.push(name); continue; }
+  try {
+    const left = readFileSync(path, 'utf8').replace(/<!--[\s\S]*?-->/g, '').match(UNFILLED) ?? [];
+    if (left.length > 0) prereq.unfilled.push(`${name} ${left.length}칸`);
+  } catch { prereq.unfilled.push(`${name} (못 읽음)`); }
+}
 const ledger = readOpenLedger(target);
 const editAlive = implemented.some((i) => stacks.some((s) => s.id === i.id)) && registered.has('edit-check');
 
@@ -298,6 +311,21 @@ const gates = [
     agent: commitGate.agent && !ledger.missing,
     git: commitGate.git && !ledger.missing,
     note: ledger.missing ? '**decisions/OPEN.md 가 없다** — 그릇이 없어 이 게이트가 조용히 빠진다' : '',
+  },
+  {
+    // 무엇을 왜(PRD)·어떻게 나눴나(ARCHITECTURE) 없이 구현을 시작하지 않는다.
+    // 문서가 없으면 게이트가 조용히 빠진다 — 그 부재를 말하는 자리가 여기다.
+    // 칸이 남아 있는 건 결손이 아니다. 아직 구현 전일 수 있다 — **알려만 준다.**
+    activity: '',
+    name: '선행 문서 (PRD·C4)',
+    applies: true,
+    agent: commitGate.agent && prereq.missing.length === 0,
+    git: commitGate.git && prereq.missing.length === 0,
+    note: prereq.missing.length > 0
+      ? `**${prereq.missing.join('·')} 가 없다** — 구현 전 게이트가 조용히 빠진다`
+      : prereq.unfilled.length > 0
+        ? `채우지 않은 칸: ${prereq.unfilled.join(' · ')} — 이대로는 첫 src/ 커밋이 막힌다`
+        : '',
   },
   {
     // **이 행은 구현이 아니라 능력을 묻는다.**

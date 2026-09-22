@@ -156,6 +156,9 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
     );
   }
 
+  // 막는다: 무엇을 왜(PRD)와 어떻게 나눴나(ARCHITECTURE) 없이 구현을 시작한다.
+  facts.push(...checkPrerequisites(root));
+
   // 알리기만 한다: 주석 수정·리팩터링·설정 변경처럼 테스트가 따라오지 않는 것이
   // 정상인 커밋이 많다. 여기서 막으면 거짓 차단이 일상이 된다.
   if (touchesMain && !touchesTest) {
@@ -246,6 +249,54 @@ function checkOpenLedger(root, changed) {
     '  OPEN 을 거치지 않고 바로 정한 것이면 `OPEN.md` 의 「OPEN 을 거치지 않은\n' +
     '  결정」에 한 줄 적어라 — 나쁜 게 아니라 **보여야** 하는 것이다.',
   ];
+}
+
+/** 자리표시자. 게이트가 "안 채웠다" 를 판정하는 유일한 표식이다. */
+export const UNFILLED = /<채울 것[^>]*>/g;
+
+/**
+ * 구현 전에 PRD 와 ARCHITECTURE(C4 L1·L2)가 채워져 있는가. (D7)
+ *
+ * ## 왜 "처음 한 번" 인가 — 단계를 되살리지 않는다
+ *
+ * "구현 넘어가기 전에" 를 단계 선언으로 만들면 없앤 `phase` 를 되살리는 것이다.
+ * 이 검사는 **단계를 모른다.** `src/` 커밋(경로)이고 자리표시자가 남았으면(내용)
+ * 막는다. 채우면 조건이 영영 거짓이 되어 **다시는 안 뜬다.** 그 뒤 신선도는
+ * 게이트가 아니라 **회고가** 지킨다 — "구조가 바뀌었나" 를 diff 로는 판정할 수
+ * 없어서다(새 디렉터리? 새 의존성? 거짓 차단이 쏟아진다).
+ *
+ * 애자일 말로는 **just enough up-front** — 필요한 만큼만 먼저.
+ *
+ * ## 거짓 차단이 원리적으로 없다
+ *
+ * 자리표시자가 남은 채 구현을 시작하는 것이 **정확히** 막으려는 상황이다.
+ * 예외가 되는 정상 작업이 없다.
+ *
+ * ## 파일이 없으면 걸지 않는다
+ *
+ * `STATUS`·`OPEN` 과 같다. 이 규약을 안 쓰는 저장소에 강요하지 않는다. 그
+ * 부재는 `gates-report` 가 말한다.
+ *
+ * HTML 주석 안은 센다에서 뺀다 — 템플릿의 설명 문구가 `<채울 것>` 을
+ * **언급**한다. 코드 펜스(Mermaid) 안은 센다 — 다이어그램도 채워야 한다.
+ */
+function checkPrerequisites(root) {
+  const out = [];
+  for (const name of ['PRD.md', 'ARCHITECTURE.md']) {
+    const path = join(root, name);
+    if (!existsSync(path)) continue;
+    let text;
+    try { text = readFileSync(path, 'utf8'); } catch { continue; }
+    const left = text.replace(/<!--[\s\S]*?-->/g, '').match(UNFILLED) ?? [];
+    if (left.length === 0) continue;
+    out.push(
+      `\`${name}\` 에 채우지 않은 칸이 ${left.length}개 있다. **구현을 시작하기 전에 채운다.**\n` +
+      left.slice(0, 3).map((m) => `    ${m}`).join('\n') + (left.length > 3 ? '\n    …' : '') + '\n' +
+      '  무엇을 왜(PRD)·어떻게 나눴나(ARCHITECTURE) 없이 짓는 역순을 막는다.\n' +
+      '  한 번 채우면 다시 안 막는다 — 그 뒤로는 회고가 본다. (D7)'
+    );
+  }
+  return out;
 }
 
 function render({ missing, facts, notices, changed }) {

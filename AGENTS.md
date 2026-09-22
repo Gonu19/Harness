@@ -5,13 +5,9 @@
 
 여기는 **하네스 자체를 만드는 저장소**다. 결과물은 다른 프로젝트로 간다.
 
-| | |
-|---|---|
-| `core/` | **판정.** 순수 함수. 어느 하네스에서 부르든 답이 같다 |
-| `adapters/` | 각 환경의 프로토콜을 `core` 에 잇는다 (`claude-code/` · `git/`) |
-| `scripts/` | `verify` · `gates-report` · `budget` · `apply-template` · `routing-lint` |
-| `template/` | 남에게 줄 문서·설정. `apply-template` 이 놓는다 |
-| `decisions/` | 대안·근거·뒤집힐 조건이 있는 판단. `ls` 가 목차다 |
+무엇을 왜는 `PRD.md`, 구조는 `ARCHITECTURE.md`(C4), 이유는 `decisions/`
+(`ls` 가 목차다). **판정은 `core/` 에만 쓴다** — 어댑터는 입력을 읽고 종료
+코드로 옮기는 것만 안다.
 
 ## 세션 시작 시
 
