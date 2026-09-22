@@ -970,6 +970,25 @@ function verifyGatesReport() {
       alive.out.includes('기획 지표') && alive.out.includes('고르는 중      1개'),
       alive.out.slice(-400));
 
+    // --- 기능 완료 판정 (D8) — 명령이 적혀 있나를 센다 -------------------
+    // 목록형 옛 PRD 는 판정 열 자체가 없다. "0개" 와 구별해 말해야 한다.
+    record(G, '목록형 PRD 는 「판정 열이 없다」 로 말한다', 'block',
+      alive.out.includes('「완료 판정」 열이 있는 표가 없다'), alive.out.slice(-600));
+
+    writeFileSync(join(root, 'PRD.md'),
+      '# PRD\n\n## 핵심 기능\n\n| # | 기능 | 완료 판정 |\n|---|---|---|\n' +
+      '| F1 | 로그인 | `npm test -- login` |\n| F2 | 결제 | 결제가 된다 |\n| F3 | 알림 | <채울 것: 명령> |\n');
+    const feats = runScript(script, [root], { env: wired.env });
+    record(G, '명령(백틱) 없는 판정과 채울 칸을 센다', 'block',
+      feats.out.includes('핵심 기능      3개 · 판정 명령 없는 것 2개 (F2, F3)'), feats.out.slice(-600));
+
+    writeFileSync(join(root, 'PRD.md'),
+      '# PRD\n\n## 핵심 기능\n\n| # | 기능 | 완료 판정 |\n|---|---|---|\n| F1 | 로그인 | `npm test -- login` |\n');
+    const allCmd = runScript(script, [root], { env: wired.env });
+    record(G, '전부 명령이면 → 그렇다고 말한다', 'pass',
+      allCmd.code === 0 && allCmd.out.includes('전부 판정 명령이 있다'), allCmd.out.slice(-600));
+    writeFileSync(join(root, 'PRD.md'), '# PRD\n\n<채울 것: 목표>\n');
+
     record(G, '칸이 남은 선행 문서는 ★ 가 아니라 알림', 'pass',
       alive.code === 0 && alive.out.includes('채우지 않은 칸: PRD.md 1칸'), alive.out.slice(-600));
 
@@ -1038,6 +1057,29 @@ function verifyGatesReport() {
 }
 
 // ---------------------------------------------------------------------------
+// 검사 8 — `--only` 자체. 기능의 완료 판정이 이 플래그로 돈다(D8).
+//
+// 오타 난 이름이 "0건 실행 · 전부 통과" 로 나가면, 완료 판정이 **아무것도
+// 안 재고 통과를 말한다.** 그게 이 저장소가 없애려는 바로 그 형태다.
+// ---------------------------------------------------------------------------
+function verifyOnlyFlag() {
+  const V = 'verify-only';
+  const self = join(REPO, 'scripts', 'verify.mjs');
+
+  const typo = runScript(self, ['--only', 'budgte']);
+  record(V, '모르는 검사 이름 → exit 2 (0건 통과가 아니다)', 'block',
+    typo.code === 2 && typo.err.includes('모르는 검사'), `exit=${typo.code}\n${typo.err.slice(0, 200)}`);
+
+  const empty = runScript(self, ['--only', '']);
+  record(V, '빈 --only → exit 2', 'block', empty.code === 2, `exit=${empty.code}`);
+
+  const one = runScript(self, ['--only', 'budget']);
+  record(V, '아는 이름이면 그것만 돈다 → exit 0', 'pass',
+    one.code === 0 && one.out.includes('budget') && !one.out.includes('guard-migrations'),
+    `exit=${one.code}\n${one.out.slice(-300)}`);
+}
+
+// ---------------------------------------------------------------------------
 // 실행
 // ---------------------------------------------------------------------------
 const missing = Object.entries(HOOK).filter(([, p]) => !existsSync(p));
@@ -1052,24 +1094,61 @@ if (fx.error) {
   process.exit(2);
 }
 
-console.log(`픽스처: ${fx.root}\n`);
+/**
+ * `--only a,b` — 검사 몇 개만 돌린다. **기능 하나의 완료 판정**으로 쓴다(D8).
+ * PRD 「핵심 기능」의 「완료 판정」 열에 이 명령이 들어간다.
+ *
+ * **모르는 이름은 판정 불가다.** 오타 난 이름으로 부르면 아무 검사도 안 돌고
+ * "전부 통과 (0건 실행)" 이 나온다 — 완료 판정이 **아무것도 안 재고 통과를
+ * 말하는** 것이다. 그래서 이름이 틀리면, 또는 결과적으로 0건이면 exit 2.
+ */
+const SUITES = [
+  ['guard-migrations', () => verifyMigrations(fx)],
+  ['commit-checklist', () => verifyCommit(fx)],
+  ['git-command', () => verifyGitCommand()],
+  ['script-writes', () => verifyScriptWrites()],
+  ['budget', () => verifyBudget()],
+  ['edit-check', () => verifyEditScope(fx)],
+  ['edit-check-run', () => verifyEditRun()],
+  ['git-hooks', () => verifyGitHooks()],
+  ['apply-template', () => verifyApplyTemplate()],
+  ['e2e-이식', () => verifyEndToEnd()],
+  ['gates-report', () => verifyGatesReport()],
+  ['verify-only', () => verifyOnlyFlag()],
+];
+const onlyIndex = process.argv.indexOf('--only');
+const ONLY = onlyIndex >= 0
+  ? new Set((process.argv[onlyIndex + 1] ?? '').split(',').map((s) => s.trim()).filter(Boolean))
+  : null;
+if (ONLY) {
+  const known = new Set(SUITES.map(([name]) => name));
+  const unknown = [...ONLY].filter((n) => !known.has(n));
+  if (ONLY.size === 0 || unknown.length > 0) {
+    console.error(`검증이 성립하지 않는다 — 모르는 검사: ${unknown.join(', ') || '(비었다)'}\n` +
+      `아는 검사: ${[...known].join(', ')}`);
+    rmSync(fx.root, { recursive: true, force: true });
+    process.exit(2);
+  }
+}
+
+console.log(`픽스처: ${fx.root}${ONLY ? `   (--only ${[...ONLY].join(',')})` : ''}\n`);
 try {
-  verifyMigrations(fx);
-  verifyCommit(fx);
-  await verifyGitCommand();
-  verifyScriptWrites();
-  await verifyBudget();
-  verifyEditScope(fx);
-  verifyEditRun();
-  verifyGitHooks();
-  verifyApplyTemplate();
-  verifyEndToEnd();
-  verifyGatesReport();
+  for (const [name, run] of SUITES) {
+    if (ONLY && !ONLY.has(name)) continue;
+    await run();
+  }
 } finally {
   rmSync(fx.root, { recursive: true, force: true });
 }
 
+// 건너뛴 사례도 고른 검사 것만 보여 준다 — 안 고른 검사의 미검증을 섞으면 읽는 사람이 헷갈린다.
+if (ONLY) skipped.splice(0, skipped.length, ...skipped.filter((s) => ONLY.has(s.group)));
+
 // --- 보고 ------------------------------------------------------------------
+if (results.length === 0) {
+  console.error('검증이 성립하지 않는다 — 한 건도 돌지 않았다. **0건 통과는 통과가 아니다.**');
+  process.exit(2);
+}
 const failed = results.filter((r) => !r.ok);
 const groups = [...new Set(results.map((r) => r.group))];
 

@@ -178,6 +178,42 @@ function readIteration(root) {
   return { start, goal, age: daysSince(start) };
 }
 
+/**
+ * PRD 「핵심 기능」의 완료 판정. (D8)
+ *
+ * **명령이 있는가**만 본다 — 백틱(`…`)으로 감싼 것이 있으면 명령으로 친다.
+ * 명령을 **돌리지는 않는다.** 이 표는 "완성 기준이 적혀 있나" 를 보여 주고,
+ * 돌리는 것은 기능이 끝났다고 말하는 쪽(에이전트·사람)의 몫이다.
+ *
+ * 판정 없는 기능이 있다고 막지 않는다. 아직 만들기 전인 기능이 목록에 있는 건
+ * 정상이다 — 다만 **끝을 모르는 채 시작하지 않도록** 보여 준다.
+ */
+function readFeatures(root) {
+  const path = join(root, 'PRD.md');
+  if (!existsSync(path)) return { missing: true };
+  let text;
+  try { text = readFileSync(path, 'utf8'); } catch (error) { return { error: String(error) }; }
+
+  const section = text.replace(/<!--[\s\S]*?-->/g, '').split(/^## /m).find((s) => s.startsWith('핵심 기능'));
+  if (!section) return { features: [], noTable: true };
+
+  const rows = section.split('\n')
+    .filter((l) => l.trim().startsWith('|'))
+    .map((l) => l.split('|').map((c) => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1))
+    .filter((cells) => cells.length >= 3 && !/^-+$/.test(cells[0]) && cells[0] !== '#');
+
+  // 표가 아니라 목록으로 적힌 옛 PRD 면 판정 열이 없다 — "0개" 와 구별해 알린다.
+  if (rows.length === 0) return { features: [], noTable: true };
+
+  return {
+    features: rows.map((cells) => {
+      const verdict = cells[cells.length - 1];
+      const unfilled = /<채울 것/.test(verdict);
+      return { id: cells[0], has: !unfilled && /`[^`]+`/.test(verdict) };
+    }),
+  };
+}
+
 /** 닫힌 결정 수. `_`·`README` 로 시작하는 것은 결정이 아니다. */
 function countDecisions(root) {
   const dir = join(root, 'decisions');
@@ -432,6 +468,18 @@ if (!ledger.missing) {
       console.log(`      ${ledger.open - ledger.dated}개는 날짜가 YYYY-MM-DD 가 아니라 나이를 못 센다`);
     }
     console.log(`  조건 대기      ${ledger.waiting}개  (나이를 세지 않는다)`);
+    const fe = readFeatures(target);
+    if (fe.missing) {
+      console.log('  핵심 기능      PRD.md 가 없다');
+    } else if (fe.error) {
+      console.log(`  핵심 기능      ✗ PRD.md 를 읽지 못했다 — ${fe.error}`);
+    } else if (fe.noTable) {
+      console.log('  핵심 기능      「완료 판정」 열이 있는 표가 없다 — 완성 기준을 적을 자리가 없다');
+    } else {
+      const without = fe.features.filter((f) => !f.has).map((f) => f.id);
+      console.log(`  핵심 기능      ${fe.features.length}개` +
+        (without.length ? ` · 판정 명령 없는 것 ${without.length}개 (${without.join(', ')})` : ' · 전부 판정 명령이 있다'));
+    }
     console.log(`  닫힌 결정      ${closedCount === null ? '(못 읽음)' : `${closedCount}개`}`);
   }
 }

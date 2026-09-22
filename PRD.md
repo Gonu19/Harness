@@ -16,10 +16,14 @@ AI 코딩 에이전트가 **"검사를 안 했다"와 "검사를 통과했다"�
 
 ## 핵심 기능
 
-1. **게이트** — 편집 직후(컴파일·타입)·커밋 전(확인·예산·마이그레이션·미결)
-2. **이식** — `apply-template` 이 놓고 `/harness-init` 이 채운다
-3. **반복** — 기획·구현·QA·문서화 한 바퀴, `/harness-retro` 가 닫는다
-4. **생존 판정** — `gates-report` 가 "깔았다" 와 "돈다" 를 가른다
+판정은 `node scripts/verify.mjs --only <검사>` 다. 끝났다고 말하기 전에 돌린다.
+
+| # | 기능 | 완료 판정 (`--only` 뒤) |
+|---|---|---|
+| F1 | **게이트** — 편집 직후·커밋 전 | `guard-migrations,commit-checklist,git-command,edit-check,edit-check-run,script-writes,git-hooks,budget` |
+| F2 | **이식** — `apply-template` 이 놓고 `/harness-init` 이 채운다 | `apply-template,e2e-이식` · 스킬은 첫 실제 이식이 판정 |
+| F3 | **반복** — `/harness-retro` 가 닫는다 | `gates-report` 의 반복 지표까지 · 스킬은 `72c983a` 회고로 봤다 |
+| F4 | **생존 판정** — "깔았다" 와 "돈다" 를 가른다 | `gates-report` |
 
 ## 하지 않는 것
 
