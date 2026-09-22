@@ -74,15 +74,15 @@ const declared = (() => {
 })();
 const noBuildDeclared = declared.stack === 'none';
 
-/**
- * 기획 단계 선언. `stack: "none"` 과 **같은 자리·같은 발상**이다 —
- * 사람이 정한 것과 도구가 못 찾은 것을 구별한다.
+/*
+ * `phase` 선언은 **없앴다.** 한때 `{ "phase": "planning" }` 이 있었는데,
+ * "코드가 생기면 지운다" 는 **일방향 전환 — 워터폴**이었다. 애자일에서 기획은
+ * 매 반복마다 돌아오므로, 두 번째 반복부터 기획이 이 표에서 사라졌다.
  *
- *   .claude/harness-gates.json  →  { "phase": "planning" }
- *
- * 코드가 생기면 이 줄을 지운다. 그러면 표가 원래대로 돌아온다.
+ * 게이트는 애초에 단계를 모른다. **커밋이 무엇을 건드리는가**로 켜진다 —
+ * `decisions/` 면 기획, `src/` 면 구현·QA, 문서면 문서화. 그래서 이 표도
+ * 단계가 아니라 **활동**(기획 · 구현 · QA · 문서화)으로 줄을 세운다.
  */
-const planning = declared.phase === 'planning';
 
 /**
  * 미결 등록부를 읽는다.
@@ -214,82 +214,113 @@ function dirHas(root, re) {
   return false;
 }
 
-// --- 게이트 표 --------------------------------------------------------------
+// --- 게이트 표 — 활동별 ------------------------------------------------------
 //
 // `applies` 가 거짓이면 그 게이트는 이 저장소에 해당하지 않는다 —
 // 없는 것이 정상이라 판정에 넣지 않는다. 해당하는데 없으면 그게 결손이다.
+//
+// 커밋 게이트 하나(`commit-checklist` / `commit-msg`)가 기획·QA·문서화 셋을
+// 다 품고 있다. 그래서 그 게이트가 살아 있다는 사실만으로는 **어느 활동이
+// 검사되는지 안 보였다.** 활동으로 줄을 세우면 그게 보인다.
+const commitGate = { agent: registered.has('commit-checklist'), git: gitHooks['commit-msg'] };
+const ledger = readOpenLedger(target);
+const editAlive = implemented.some((i) => stacks.some((s) => s.id === i.id)) && registered.has('edit-check');
+
 const gates = [
   {
-    name: 'guard-migrations',
-    what: '적용된 마이그레이션 수정 차단',
-    applies: hasMigrations,
-    agent: registered.has('guard-migrations'),
-    git: gitHooks['pre-commit'],
-    note: '마이그레이션 디렉터리가 없으면 해당 없음',
-  },
-  {
-    name: 'commit-checklist',
-    what: '커밋 전 확인 (메시지 · diff · 문서 예산)',
+    activity: '기획',
+    name: '결정 ↔ OPEN 동반',
     applies: true,
-    agent: registered.has('commit-checklist'),
-    git: gitHooks['commit-msg'],
-    note: '',
+    // 그릇이 없으면 게이트가 **조용히 빠진다** — `core/commit.mjs` 는 `OPEN.md` 가
+    // 없는 저장소에 강요하지 않기 때문이다. 그 부재를 말하는 자리가 여기다.
+    agent: commitGate.agent && !ledger.missing,
+    git: commitGate.git && !ledger.missing,
+    note: ledger.missing ? '**decisions/OPEN.md 가 없다** — 그릇이 없어 이 게이트가 조용히 빠진다' : '',
   },
   {
     // **이 행은 구현이 아니라 능력을 묻는다.**
     //
     // `applies: 자바 프로젝트인가` 로 두면 TypeScript 저장소에서 "해당 없음"이
     // 나오고, 그건 "게이트가 필요 없다"로 읽힌다. 사실은 반대다 — 필요한데
-    // **우리가 Java 것만 갖고 있다.** 그 결손을 "해당 없음"으로 적으면
+    // **우리가 그 스택 것을 안 갖고 있다.** 그 결손을 "해당 없음"으로 적으면
     // 이 명령은 자기가 드러내려던 침묵을 자기가 만든다.
+    activity: '구현',
     name: '컴파일/타입 검사',
-    what: '편집 직후 컴파일 (구현: compile-check · Java/Gradle 전용)',
-    // 기획 단계에는 검사할 코드가 없다. **막는 게 아니라 해당하지 않는 것**이다.
-    applies: !noBuildDeclared && !planning,
-    agent: implemented.some((i) => stacks.some((s) => s.id === i.id)) && registered.has('edit-check'),
+    applies: !noBuildDeclared,
+    agent: editAlive,
     git: null,   // 일부러 없다 — 커밋 시점 컴파일은 값을 잃고 커밋을 붙잡는다
-    note: planning
-      ? '.claude/harness-gates.json 에 phase:planning 이 선언돼 있다 — 사람이 정한 것이다'
-      : noBuildDeclared
+    note: noBuildDeclared
       ? '.claude/harness-gates.json 에 stack:none 이 선언돼 있다 — 사람이 정한 것이다'
       : stacks.length === 0
         ? '**스택을 알아보지 못했다.** 빌드가 없는 저장소면 .claude/harness-gates.json 에 {"stack":"none"} 을 적어라'
-        : implemented.some((i) => stacks.some((s) => s.id === i.id))
+        : editAlive || implemented.some((i) => stacks.some((s) => s.id === i.id))
           ? ''
           : `이 스택(${stacks.map((s) => s.label).join('·')})용 구현이 없다 — 편집 루프 게이트가 통째로 빈다`,
+  },
+  {
+    activity: '',
+    name: '마이그레이션 보호',
+    applies: hasMigrations,
+    agent: registered.has('guard-migrations'),
+    git: gitHooks['pre-commit'],
+    note: hasMigrations ? '' : '마이그레이션 디렉터리가 없으면 해당 없음',
+  },
+  {
+    activity: 'QA',
+    name: '커밋 열쇠말(규모·경로)',
+    // 열쇠말은 `src/` 가 바뀌는 커밋에만 뜬다. 빌드가 없으면 뜰 일이 없다.
+    applies: !noBuildDeclared,
+    agent: commitGate.agent,
+    git: commitGate.git,
+    note: noBuildDeclared
+      ? '빌드가 없어 src/ 커밋이 없다 — 열쇠말이 뜰 일이 없다'
+      : '테스트 미동반은 **알리기만** 한다 — 주석 수정·리팩터링에 흔해서 막으면 거짓 차단',
+  },
+  {
+    activity: '문서화',
+    name: 'STATUS 동반 · 문서 예산',
+    applies: true,
+    agent: commitGate.agent,
+    git: commitGate.git,
+    note: '',
   },
 ];
 
 // --- 출력 -------------------------------------------------------------------
 const mark = (v) => (v === null ? ' — ' : v ? ' ○ ' : ' ✗ ');
 
+/**
+ * 터미널에서 한글은 두 칸을 먹는다. `padEnd` 는 글자 수를 세므로
+ * 한글이 섞인 열이 전부 밀린다 — 표가 어긋나면 사람은 읽기를 멈춘다.
+ */
+const cells = (s) => [...s].reduce((n, c) => n + (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿＀-｠]/.test(c) ? 2 : 1), 0);
+const pad = (s, w) => s + ' '.repeat(Math.max(0, w - cells(s)));
+
 console.log(`\n대상   ${target}`);
 console.log(`스택   ${stacks.length ? stacks.map((s) => s.label).join(' · ') : '(판정 못 함 — 빌드 표식이 없다)'}`);
 console.log(`구현   편집 루프 게이트: ${implemented.map((i) => i.label).join(' · ')}`);
 console.log(`하네스 Claude Code 등록 ${registered.size}건 · git 훅 ${Object.values(gitHooks).filter(Boolean).length}/2\n`);
 
-console.log('게이트                에이전트 git  상태');
-console.log('─'.repeat(62));
+console.log(`${pad('활동', 8)}${pad('게이트', 26)}에이전트 git  상태`);
+console.log('─'.repeat(66));
 const dead = [];
 for (const g of gates) {
   let state;
   if (!g.applies) state = '해당 없음';
   else if (g.agent || g.git) state = '산다';
   else { state = '★ 어느 계층에도 없다'; dead.push(g); }
-  console.log(`${g.name.padEnd(21)}${mark(g.agent)}    ${mark(g.git)} ${state}`);
-  if (g.note) console.log(`    ${g.note}`);
+  console.log(`${pad(g.activity, 8)}${pad(g.name, 26)}${mark(g.agent)}    ${mark(g.git)} ${state}`);
+  if (g.note) console.log(`${' '.repeat(10)}${g.note}`);
 }
 
 // --- 기획 지표 — 막지 않는다. 보여 준다 ------------------------------------
 //
-// 나이가 나쁜지는 도구가 모른다. 며칠이 긴지는 프로젝트마다 다르고, 도구가
-// 정하면 그건 거짓 수렴이다. **세어서 보여 주고 판단은 사람이 한다.**
-const ledger = planning ? readOpenLedger(target) : null;
-if (planning) {
+// **항상** 보인다. 애자일에서는 매 반복에 기획이 있으므로 "기획 단계일 때만"
+// 이 아니다. 나이가 나쁜지는 도구가 모른다 — 며칠이 긴지는 프로젝트마다 다르고,
+// 도구가 정하면 그건 거짓 수렴이다. **세어서 보여 주고 판단은 사람이 한다.**
+if (!ledger.missing) {
   console.log('\n기획 지표 — 판단은 사람이 한다');
-  if (ledger.missing) {
-    console.log('  ✗ decisions/OPEN.md 가 없다 — 미결을 담을 그릇이 없다');
-  } else if (ledger.error) {
+  if (ledger.error) {
     console.log(`  ✗ decisions/OPEN.md 를 읽지 못했다 — **없는 것과 다른 사실이다**\n      ${ledger.error}`);
   } else {
     const closedCount = countDecisions(target);
@@ -322,16 +353,8 @@ if (declared.broken) {
 `);
   process.exit(2);
 }
-// 기획 단계인데 그릇이 없으면 결손이다. 나이는 알림이지 실패가 아니다.
-if (planning && ledger?.missing) {
-  console.error(
-    '\n기획 단계로 선언됐는데 `decisions/OPEN.md` 가 없다.\n' +
-    '미결이 대화 속에만 남고, 세션이 끝나면 사라진다.\n' +
-    `  node <하네스>/scripts/apply-template.mjs ${target}\n`
-  );
-  process.exit(1);
-}
-if (planning && ledger?.error) process.exit(2);
+// 미결 등록부를 **못 읽은** 것은 판정 불가다. 없는 것(기획 행의 ★)과 다르다.
+if (ledger.error) process.exit(2);
 if (settingsErrors.length > 0) process.exit(2);
 if (dead.length > 0) {
   console.error(`해당하는데 살아 있지 않은 게이트 ${dead.length}건: ${dead.map((g) => g.name).join(', ')}\n`);

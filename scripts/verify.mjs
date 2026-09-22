@@ -794,6 +794,17 @@ function verifyGatesReport() {
     spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
     writeFileSync(join(root, 'pyproject.toml'), '[project]\nname="x"\n');
 
+    // 미결 등록부가 없으면 기획 게이트가 **조용히 빠진다.** core 는 OPEN.md 가
+    // 없는 저장소에 강요하지 않으므로, 그 부재를 말하는 자리가 이 표다.
+    const noLedger = runScript(script, [root], { env: wired.env });
+    record(G, 'OPEN.md 가 없으면 기획 행이 ★ → exit 1', 'block',
+      noLedger.code === 1 && noLedger.out.includes('decisions/OPEN.md 가 없다'),
+      `exit=${noLedger.code}\n${noLedger.out.slice(-400)}`);
+
+    mkdirSync(join(root, 'decisions'), { recursive: true });
+    writeFileSync(join(root, 'decisions', 'OPEN.md'),
+      '# 열린 질문\n\n| 질문 | 기울기 | 닫는 조건 | 연 날짜 |\n|---|---|---|---|\n| 무엇 | 쪽 | 조건 | 2026-01-01 |\n');
+
     // 훅이 어느 계층에도 없다 → 결손이다.
     const dead = runScript(script, [root], { env: bare.env });
     record(G, '훅이 하나도 없으면 → exit 1', 'block',
@@ -801,8 +812,13 @@ function verifyGatesReport() {
 
     // 짝 — 도구 계층만 걸려도 산다. 이게 없으면 "항상 ★ 내는 표" 와 구별 안 된다.
     const alive = runScript(script, [root], { env: wired.env });
-    record(G, '도구 계층이 걸리면 → exit 0', 'pass',
+    record(G, '도구 계층 + OPEN.md 가 있으면 → exit 0', 'pass',
       alive.code === 0, `exit=${alive.code}\n${alive.out.slice(-300)}`);
+
+    // 기획 지표는 **단계 선언 없이 항상** 보여야 한다. 애자일에서 기획은 매 반복에 온다.
+    record(G, '기획 지표가 선언 없이도 보인다', 'pass',
+      alive.out.includes('기획 지표') && alive.out.includes('열린 질문      1개'),
+      alive.out.slice(-400));
 
     // 스택을 못 알아보면 통과가 아니다.
     rmSync(join(root, 'pyproject.toml'));
