@@ -85,6 +85,25 @@ const noBuildDeclared = declared.stack === 'none';
  */
 
 /**
+ * `YYYY-MM-DD` 로부터 **현지 달력으로** 며칠 지났나.
+ *
+ * `Date.parse('2026-09-23')` 는 **UTC 자정**이다. 사람이 적은 날짜는 현지
+ * 날짜라, 한국 시간 아침 9시 전에는 오늘 연 반복이 `-1일째` 로 나왔다
+ * (실측). 현지 자정끼리 뺀다.
+ *
+ * 음수는 **미래 날짜** — 대개 오타다. 0 으로 접지 않는다. 접으면 틀린 날짜가
+ * "오늘 시작" 으로 보인다.
+ */
+function daysSince(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd ?? '');
+  if (!m) return null;
+  const then = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((today - then) / 86400000);   // 서머타임이 있는 곳에서도 반올림이 맞다
+}
+
+/**
  * 미결 등록부를 읽는다.
  *
  * **못 읽은 것과 비어 있는 것을 가른다.** "0개" 와 "못 읽었다" 가 같은 출력으로
@@ -98,21 +117,37 @@ function readOpenLedger(root) {
   try { text = readFileSync(path, 'utf8'); }
   catch (error) { return { error: String(error) }; }
 
-  // 표 본문만 센다. 구분선(`|---`)·헤더·자리표시자는 뺀다.
-  const rows = text.split('\n')
-    .filter((l) => l.trim().startsWith('|'))
-    .map((l) => l.split('|').map((c) => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1))
-    .filter((cells) => cells.length >= 2)
-    .filter((cells) => !/^-+$/.test(cells[0] ?? ''))
-    .filter((cells) => cells[0] && cells[0] !== '질문' && !/^<.*>$/.test(cells[0]));
+  // **절(`## `)별로 나눠 센다.** 한 파일의 모든 표 줄을 세면 「조건 대기」처럼
+  // 원래 늙어야 하는 항목이 나이 지표를 차지한다 — 첫 회고에서 실제로 그랬다
+  // (가장 오래된 것 13일 = 전부 조건 대기). 그러면 닫기를 피하는 질문이 생겨도
+  // 그 숫자에 묻혀 안 보인다.
+  const sections = text.replace(/<!--[\s\S]*?-->/g, '').split(/^## /m);
+  const tableOf = (heads) => {
+    const s = sections.find((sec) => heads.some((h) => sec.startsWith(h)));
+    if (!s) return null;
+    return s.split('\n')
+      .filter((l) => l.trim().startsWith('|'))
+      .map((l) => l.split('|').map((c) => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1))
+      .filter((cells) => cells.length >= 2)
+      .filter((cells) => !/^-+$/.test(cells[0] ?? ''))
+      .filter((cells) => cells[0] && cells[0] !== '질문' && !/^<.*>$/.test(cells[0]));
+  };
 
-  const today = Date.now();
-  const ages = rows
-    .map((cells) => cells[cells.length - 1])
-    .map((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) ? Math.floor((today - Date.parse(d)) / 86400000) : null)
-    .filter((n) => n !== null && Number.isFinite(n));
+  // `열린 질문` 은 절을 나누기 전의 옛 이름이다. 이미 이식된 저장소를 깨지 않는다.
+  const choosing = tableOf(['고르는 중', '열린 질문']) ?? [];
+  const waiting = tableOf(['조건 대기']) ?? [];
 
-  return { open: rows.length, oldest: ages.length ? Math.max(...ages) : null, dated: ages.length };
+  const ages = choosing
+    .map((cells) => daysSince(cells[cells.length - 1]))
+    .filter((n) => n !== null);
+
+  return {
+    open: choosing.length,
+    waiting: waiting.length,
+    oldest: ages.some((n) => n >= 0) ? Math.max(...ages.filter((n) => n >= 0)) : null,
+    future: ages.filter((n) => n < 0).length,   // max 에 숨기지 않는다
+    dated: ages.length,
+  };
 }
 
 /**
@@ -139,9 +174,7 @@ function readIteration(root) {
   const body = section.replace(/<!--[\s\S]*?-->/g, '');
   const start = body.match(/^- 시작:\s*(\d{4}-\d{2}-\d{2})\s*$/m)?.[1] ?? null;
   const goal = body.match(/^- 목표:\s*(.+)$/m)?.[1]?.trim() ?? null;
-  const age = start ? Math.floor((Date.now() - Date.parse(start)) / 86400000) : null;
-
-  return { start, goal, age: Number.isFinite(age) ? age : null };
+  return { start, goal, age: daysSince(start) };
 }
 
 /** 닫힌 결정 수. `_`·`README` 로 시작하는 것은 결정이 아니다. */
@@ -364,11 +397,13 @@ if (!ledger.missing) {
     console.log(`  ✗ decisions/OPEN.md 를 읽지 못했다 — **없는 것과 다른 사실이다**\n      ${ledger.error}`);
   } else {
     const closedCount = countDecisions(target);
-    console.log(`  열린 질문      ${ledger.open}개`);
+    console.log(`  고르는 중      ${ledger.open}개`);
     console.log(`  가장 오래된 것  ${ledger.oldest === null ? '(날짜를 읽은 항목이 없다)' : `${ledger.oldest}일`}`);
+    if (ledger.future > 0) console.log(`      ✗ ${ledger.future}개는 연 날짜가 미래다 — 오타인가`);
     if (ledger.dated < ledger.open) {
       console.log(`      ${ledger.open - ledger.dated}개는 날짜가 YYYY-MM-DD 가 아니라 나이를 못 센다`);
     }
+    console.log(`  조건 대기      ${ledger.waiting}개  (나이를 세지 않는다)`);
     console.log(`  닫힌 결정      ${closedCount === null ? '(못 읽음)' : `${closedCount}개`}`);
   }
 }
@@ -383,7 +418,9 @@ if (iteration.missing) {
 } else if (iteration.start === null) {
   console.log('  ✗ 「이번 반복」 절은 있는데 시작일을 못 읽었다 — `- 시작: YYYY-MM-DD` 형식');
 } else {
-  console.log(`  ${iteration.age}일째  (${iteration.start} 시작)`);
+  console.log(iteration.age < 0
+    ? `  ✗ 시작일 ${iteration.start} 이 미래다 — 오타인가`
+    : `  ${iteration.age}일째  (${iteration.start} 시작)`);
   console.log(`  목표  ${iteration.goal ?? '(없다 — 끝났는지 판정할 수 없다)'}`);
 }
 

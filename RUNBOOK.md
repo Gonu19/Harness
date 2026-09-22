@@ -53,7 +53,8 @@ for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check $f; done
 | `spawn EINVAL` | Windows 는 `.bat`·`.cmd` 를 셸 없이 못 띄운다. `cmd.exe /d /s /c` 로 감싸거나 JS 진입점을 `node` 로 직접 불러 셸을 피한다 |
 | `git checkout -- <경로>` 가 원상복구가 아니다 | **인덱스에서** 복원한다. `HEAD` 를 명시해라 |
 | git 훅이 발화하지 않는다 | 확장자 없는 POSIX 스크립트여야 한다. `.bat`·`.cmd` 는 **조용히** 무시 |
-| Bash heredoc 이 거부됨 | 워크트리 격리 가드. 파일은 Write 도구로 만든다 |
+| `sed -i` 가 일부만 바꿨다 | 패턴 여럿 중 **안 맞은 것은 조용히 무동작**. 오류가 없다. Edit 로 한 곳씩 |
+| Windows `python` 이 파일을 못 연다 | Git Bash 경로(`/a/...`)를 모른다. `A:\...` 로 준다 |
 
 ## 절대 하지 않는 것
 

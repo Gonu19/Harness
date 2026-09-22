@@ -853,8 +853,11 @@ function verifyGatesReport() {
       `exit=${noLedger.code}\n${noLedger.out.slice(-400)}`);
 
     mkdirSync(join(root, 'decisions'), { recursive: true });
+    // 「조건 대기」에 **아주 오래된** 항목을 둔다. 나이 지표가 이걸 세면 안 된다 —
+    // 원래 늙어야 하는 항목이 숫자를 차지하면 닫기를 피하는 질문이 묻힌다.
     writeFileSync(join(root, 'decisions', 'OPEN.md'),
-      '# 열린 질문\n\n| 질문 | 기울기 | 닫는 조건 | 연 날짜 |\n|---|---|---|---|\n| 무엇 | 쪽 | 조건 | 2026-01-01 |\n');
+      '# 열린 질문\n\n## 고르는 중\n\n| 질문 | 기울기 | 닫는 조건 | 연 날짜 |\n|---|---|---|---|\n' +
+      '| 무엇 | 쪽 | 조건 | 2026-01-01 |\n\n## 조건 대기\n\n| 질문 | 트리거 |\n|---|---|\n| 오래된 것 | 언젠가 |\n');
 
     // 훅이 어느 계층에도 없다 → 결손이다.
     const dead = runScript(script, [root], { env: bare.env });
@@ -868,7 +871,11 @@ function verifyGatesReport() {
 
     // 기획 지표는 **단계 선언 없이 항상** 보여야 한다. 애자일에서 기획은 매 반복에 온다.
     record(G, '기획 지표가 선언 없이도 보인다', 'pass',
-      alive.out.includes('기획 지표') && alive.out.includes('열린 질문      1개'),
+      alive.out.includes('기획 지표') && alive.out.includes('고르는 중      1개'),
+      alive.out.slice(-400));
+
+    record(G, '조건 대기는 따로 세고 나이에 안 들어간다', 'block',
+      alive.out.includes('조건 대기      1개') && !alive.out.includes('조건 대기      0개'),
       alive.out.slice(-400));
 
     // --- 반복 지표: 셋을 섞지 않는다 — 없다 · 형식이 깨졌다 · 읽었다 -------
@@ -882,6 +889,21 @@ function verifyGatesReport() {
     record(G, '반복 날짜가 깨졌으면 "못 읽었다" (주석 속 예시를 값으로 읽지 않는다)', 'block',
       badDate.out.includes('시작일을 못 읽었다') && !badDate.out.includes('2000-01-01 시작'),
       badDate.out.slice(-400));
+
+    // **오늘 연 반복은 0일째여야 한다.** UTC 자정으로 파싱하면 동쪽 시간대에서는
+    // 아침마다 -1일째가 나왔다(실측, 한국 00:19). 현지 날짜로 만든다.
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    writeFileSync(join(root, 'STATUS.md'), `# 상태\n\n## 이번 반복\n\n- 시작: ${today}\n- 목표: 무엇\n`);
+    const todayRun = runScript(script, [root], { env: wired.env });
+    record(G, '오늘 연 반복은 0일째 (시간대 때문에 -1 이 되지 않는다)', 'block',
+      todayRun.out.includes('0일째') && !todayRun.out.includes('-1일째'),
+      todayRun.out.slice(-300));
+
+    writeFileSync(join(root, 'STATUS.md'), '# 상태\n\n## 이번 반복\n\n- 시작: 2999-01-01\n- 목표: 무엇\n');
+    const future = runScript(script, [root], { env: wired.env });
+    record(G, '미래 시작일은 0 으로 접지 않고 오타라고 말한다', 'block',
+      future.out.includes('미래다'), future.out.slice(-300));
 
     writeFileSync(join(root, 'STATUS.md'),
       '# 상태\n\n## 이번 반복\n\n- 시작: 2026-01-01\n- 목표: 로그인이 된다\n');
