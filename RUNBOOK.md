@@ -49,7 +49,6 @@ for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check $f; done
 
 | 증상 | 진짜 원인 |
 |---|---|
-| 스크립트로 쓴 문서가 깨진다 | 이스케이프가 셸·스크립트·대상에서 세 번 해석된다. **내용은 Write 도구로** |
 | 게이트가 낡은 크기를 잰다 | PreToolUse 는 **명령 전체**를 막는다. `git add && git commit` 이면 `add` 가 안 돌아 직전 인덱스를 잰다. **`add` 를 따로 불러라** |
 | `spawn EINVAL` | Windows 는 `.bat`·`.cmd` 를 셸 없이 못 띄운다. `cmd.exe /d /s /c` 로 감싸거나 JS 진입점을 `node` 로 직접 불러 셸을 피한다 |
 | `git checkout -- <경로>` 가 원상복구가 아니다 | **인덱스에서** 복원한다. `HEAD` 를 명시해라 |

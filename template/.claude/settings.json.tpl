@@ -41,6 +41,12 @@
             "command": "node \"A:/project/Harness/adapters/claude-code/commit-checklist.mjs\"",
             "timeout": 30,
             "statusMessage": "커밋 전 확인"
+          },
+          {
+            "type": "command",
+            "command": "node \"A:/project/Harness/adapters/claude-code/guard-script-writes.mjs\"",
+            "timeout": 30,
+            "statusMessage": "스크립트 쓰기 차단"
           }
         ]
       }

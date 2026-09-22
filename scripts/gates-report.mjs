@@ -181,7 +181,7 @@ for (const path of settingsFiles) {
     for (const entry of group ?? []) {
       for (const h of entry?.hooks ?? []) {
         const cmd = String(h?.command ?? '');
-        for (const name of ['edit-check', 'guard-migrations', 'commit-checklist']) {
+        for (const name of ['edit-check', 'guard-migrations', 'commit-checklist', 'guard-script-writes']) {
           if (cmd.includes(name)) registered.add(name);
         }
       }
@@ -311,6 +311,17 @@ const gates = [
     applies: true,
     agent: commitGate.agent,
     git: commitGate.git,
+    note: '',
+  },
+  {
+    // 네 활동 중 어디에도 속하지 않는다. 프로젝트가 아니라 **에이전트의 도구
+    // 사용**에 관한 게이트라서다. 그래도 표에 둔다 — 등록됐는데 표에 없으면
+    // 그 게이트는 있는지 없는지 아무도 모른다.
+    activity: '도구',
+    name: '파일 내용은 Write/Edit (D6)',
+    applies: true,
+    agent: registered.has('guard-script-writes'),
+    git: null,   // git 은 파일이 어떻게 써졌는지 모른다
     note: '',
   },
 ];

@@ -99,6 +99,25 @@ function tokenize(segment) {
   return tokens;
 }
 
+/**
+ * 각 명령 조각의 **실행 파일 이름**(소문자·경로와 `.exe` 뗀 것).
+ *
+ * `VAR=값 python …` 처럼 앞에 붙은 환경변수 대입은 건너뛴다.
+ *
+ * **heredoc 본문은 데이터라 빼고 센다.** `git commit -F - <<'EOF'` 의 메시지에
+ * `python` 이라는 글자가 있어도 그 조각의 실행 파일은 `git` 이다 — 이걸
+ * 구별하지 못하면 커밋 메시지가 코드를 논할 때마다 엉뚱한 게이트가 켜진다.
+ */
+export function commandHeads(command) {
+  return segments(command)
+    .map((seg) => {
+      const tokens = tokenize(seg);
+      const i = tokens.findIndex((t) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(t));
+      return i >= 0 ? tokens[i].replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase() : '';
+    })
+    .filter(Boolean);
+}
+
 /** `git` 다음의 전역 옵션을 건너뛰고 서브커맨드를 찾는다. */
 function subcommandOf(tokens) {
   let i = 1;

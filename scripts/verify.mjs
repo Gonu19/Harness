@@ -100,7 +100,10 @@ function fakeHome(register) {
         PostToolUse: [{ matcher: 'Write|Edit', hooks: [{ type: 'command', command: `node "${H}/edit-check.mjs"` }] }],
         PreToolUse: [
           { matcher: 'Write|Edit|Bash', hooks: [{ type: 'command', command: `node "${H}/guard-migrations.mjs"` }] },
-          { matcher: 'Bash', hooks: [{ type: 'command', command: `node "${H}/commit-checklist.mjs"` }] },
+          { matcher: 'Bash', hooks: [
+            { type: 'command', command: `node "${H}/commit-checklist.mjs"` },
+            { type: 'command', command: `node "${H}/guard-script-writes.mjs"` },
+          ] },
         ],
       } }
     : {};
@@ -371,6 +374,54 @@ async function verifyGitCommand() {
   const plain = findCommitInvocation('git commit -m "x"');
   record(G, '-m 만이면 인덱스만 본다', 'pass',
     plain !== null && stagesWorkingTree(plain.tokens, plain.rest) === false, '');
+}
+
+// ---------------------------------------------------------------------------
+// 검사 3a — 스크립트로 파일 쓰기 (D6)
+//
+// **통과 쪽이 더 중요하다.** 이 게이트가 커밋 heredoc 을 막으면 커밋이 전부
+// 막히고, 그러면 사람이 게이트를 끈다. 이 결정의 커밋 메시지부터가
+// `open(p, 'w')` 를 **논하는** heredoc 이다.
+// ---------------------------------------------------------------------------
+function verifyScriptWrites() {
+  const S = 'script-writes';
+  const hook = join(REPO, 'adapters', 'claude-code', 'guard-script-writes.mjs');
+  const bash = (command) => runHook(hook, { tool_name: 'Bash', tool_input: { command } }, REPO);
+
+  // --- 막는다 ------------------------------------------------------------
+  // 이 세션에서 실제로 세 번 어긴 모양 그대로.
+  expect(S, '실제로 어긴 모양 (cd && python heredoc + io.open w) → 차단', 'block', 2,
+    bash("cd /tmp && python - <<'PY'\nimport io\np='a.md'\ns=io.open(p,encoding='utf-8').read()\ns=s.replace('x','y')\nio.open(p,'w',encoding='utf-8',newline='').write(s)\nPY"),
+    'Write/Edit 도구로 써라');
+
+  expect(S, 'python -c open(…, "w") → 차단', 'block', 2,
+    bash(`python -c "open('out.txt','w').write('x')"`), 'Write/Edit');
+
+  expect(S, 'Path.write_text → 차단', 'block', 2,
+    bash("python3 - <<'PY'\nfrom pathlib import Path\nPath('o.txt').write_text('x')\nPY"), 'Write/Edit');
+
+  expect(S, '환경변수 접두 + 추가 모드(a) → 차단', 'block', 2,
+    bash(`PYTHONIOENCODING=utf-8 python -c "open('log.txt', 'a').write('x')"`), 'Write/Edit');
+
+  // --- 통과한다 ----------------------------------------------------------
+  // 이게 깨지면 이 저장소의 모든 커밋이 막힌다.
+  expect(S, '커밋 heredoc 이 open(p, "w") 를 논해도 → 통과', 'pass', 0,
+    bash("git commit -q -F - <<'EOF'\n스크립트 쓰기를 막는다\n\nio.open(p, 'w').write(s) 는 조용히 실패한다.\npython 으로 쓰지 마라.\nEOF"));
+
+  expect(S, 'python 으로 읽기만 → 통과', 'pass', 0,
+    bash(`python -c "print(len(open('x.md', encoding='utf-8').read()))"`));
+
+  // 거짓 양성으로 실제로 걸렸던 모양: 파일 이름 한 글자를 모드로 읽었다.
+  expect(S, "파일 이름이 'a' 여도 읽기는 → 통과", 'pass', 0,
+    bash(`python -c "print(open('a').read())"`));
+
+  expect(S, 'node -e 측정 → 통과 (범위 밖)', 'pass', 0,
+    bash(`node -e "console.log(require('fs').statSync('a').size)"`));
+
+  expect(S, 'Bash 가 아니면 → 소관 아님', 'pass', 0,
+    runHook(hook, { tool_name: 'Edit', tool_input: { file_path: 'a' } }, REPO));
+
+  expect(S, '깨진 JSON → 판정 불가(통과 아님)', 'block', 2, runHook(hook, 'not json', REPO));
 }
 
 // ---------------------------------------------------------------------------
@@ -885,6 +936,7 @@ try {
   verifyMigrations(fx);
   verifyCommit(fx);
   await verifyGitCommand();
+  verifyScriptWrites();
   await verifyBudget();
   verifyEditScope(fx);
   verifyEditRun();

@@ -18,13 +18,14 @@
 `adapters/claude-code/` 는 Claude Code 에서만 돌지만 **우회 수단이 없다.**
 `adapters/git/` 은 어느 에이전트든 돌지만 `--no-verify` 로 뚫린다. 상보다.
 
-## 되는 것 — 95건 회귀로 검증됨
+## 되는 것 — 110건 회귀로 검증됨
 
 | 게이트 | 도구 계층 | git 계층 |
 |---|---|---|
 | `guard-migrations` | Write/Edit/Bash | `pre-commit` |
 | `commit-checklist` | Bash 가로채기 | `commit-msg` |
 | `edit-check` | Java · TS `tsc` · Py `ast.parse`/mypy | 없다(느려서 값을 잃는다) |
+| `guard-script-writes` | python 파일 쓰기 차단(`D6`) | 없다(쓴 방법을 모른다) |
 
 `claudeMdExcludes` 는 **사용자 스코프에도 먹는다**(0a 분기 A). `session-log` 발화도 봤다.
 
@@ -39,24 +40,15 @@ node scripts/gates-report.mjs   <프로젝트>   # ← exit 0 이어야 끝
 **스크립트가 놓고 스킬이 채운다**(`D4`). 절차는 `docs/이식-절차.md`.
 세 스크립트 다 회귀에 있다.
 
-## 기획 단계 — 구역 셋, 닫을 때만 게이트
+## 애자일 — 단계가 아니라 바퀴
 
-```
-docs/ ──①──▶ decisions/OPEN.md ──②──▶ decisions/D<n>
- 탐색(자유)        열림                    닫힘
-```
+`docs/`(탐색·자유) → `OPEN.md`(열림) → `D<n>`(닫힘). **닫을 때만 막는다** —
+`decisions/` 가 바뀌는데 `OPEN.md` 가 그 커밋에 없으면. 열쇠말 없이 diff 로만.
+`OPEN.md` 의 3KB 한도가 **셈이다**.
 
-**①은 자유, ②에만 건다.** `decisions/` 가 바뀌는데 `OPEN.md` 가 그 커밋에
-없으면 막는다 — `STATUS.md` 동반 규칙과 같은 모양이고 **열쇠말을 안 쓴다**
-(diff 사실로만 판정하니 반사적으로 찍을 칸이 없다).
-
-`OPEN.md` 의 3KB 한도가 **셈이다** — 넘치면 넓히기만 하고 고르지 않는 것.
-
-**단계 선언(`phase`)은 없앴다** — 워터폴이었다. 게이트는 경로로 켜지고,
-`gates-report` 는 **활동**(기획·구현·QA·문서화)으로 줄을 선다.
-
-**넷은 한 바퀴다**(`D5`). 「이번 반복」에 시작일·목표, 끝나면 `/harness-retro`
-— 산출물은 지뢰표·`OPEN`·`decisions`·`STATUS` 로, 서술은 회고 커밋으로.
+`phase` 는 없앴다(워터폴). 게이트는 경로로 켜지고 `gates-report` 는 **활동**
+(기획·구현·QA·문서화)으로 줄을 선다. **넷은 한 바퀴다**(`D5`) — 「이번 반복」,
+끝나면 `/harness-retro`. 산출물은 네 곳으로, 서술은 회고 커밋으로.
 
 ## 다음 — 전부 조건부다
 
