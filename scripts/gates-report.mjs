@@ -115,6 +115,35 @@ function readOpenLedger(root) {
   return { open: rows.length, oldest: ages.length ? Math.max(...ages) : null, dated: ages.length };
 }
 
+/**
+ * 이번 반복 — `STATUS.md` 의 「이번 반복」 절에서 시작일과 목표를 읽는다.
+ *
+ * 반복의 **나이**를 세는 이유: 회고가 밀리면 다음 반복의 기획이 지난 반복의
+ * 의문 없이 시작된다. 그런데 며칠이 긴지는 도구가 모른다 — 그래서 막지 않고
+ * **보여 준다.**
+ *
+ * 세 가지를 가른다 — 절이 **없다** · 있는데 **날짜를 못 읽었다** · 읽었다.
+ * 앞의 둘을 같은 출력으로 내면 "반복을 안 쓰는 저장소" 와 "형식이 깨진
+ * 저장소" 가 구별되지 않는다.
+ */
+function readIteration(root) {
+  const path = join(root, 'STATUS.md');
+  if (!existsSync(path)) return { missing: true };
+  let text;
+  try { text = readFileSync(path, 'utf8'); } catch (error) { return { error: String(error) }; }
+
+  const section = text.split(/^## /m).find((s) => s.startsWith('이번 반복'));
+  if (!section) return { missing: true };
+
+  // HTML 주석 안의 설명 문구는 건너뛴다 — 형식 예시를 값으로 읽으면 안 된다.
+  const body = section.replace(/<!--[\s\S]*?-->/g, '');
+  const start = body.match(/^- 시작:\s*(\d{4}-\d{2}-\d{2})\s*$/m)?.[1] ?? null;
+  const goal = body.match(/^- 목표:\s*(.+)$/m)?.[1]?.trim() ?? null;
+  const age = start ? Math.floor((Date.now() - Date.parse(start)) / 86400000) : null;
+
+  return { start, goal, age: Number.isFinite(age) ? age : null };
+}
+
 /** 닫힌 결정 수. `_`·`README` 로 시작하는 것은 결정이 아니다. */
 function countDecisions(root) {
   const dir = join(root, 'decisions');
@@ -333,6 +362,20 @@ if (!ledger.missing) {
   }
 }
 
+// --- 반복 지표 — 역시 보여 주기만 한다 -------------------------------------
+const iteration = readIteration(target);
+console.log('\n이번 반복 — 판단은 사람이 한다');
+if (iteration.missing) {
+  console.log('  기록 없음 — STATUS.md 에 「이번 반복」 절이 없다. 회고가 남을 자리가 없다');
+} else if (iteration.error) {
+  console.log(`  ✗ STATUS.md 를 읽지 못했다 — **없는 것과 다른 사실이다**\n      ${iteration.error}`);
+} else if (iteration.start === null) {
+  console.log('  ✗ 「이번 반복」 절은 있는데 시작일을 못 읽었다 — `- 시작: YYYY-MM-DD` 형식');
+} else {
+  console.log(`  ${iteration.age}일째  (${iteration.start} 시작)`);
+  console.log(`  목표  ${iteration.goal ?? '(없다 — 끝났는지 판정할 수 없다)'}`);
+}
+
 console.log('\n문서 포인터 — 다른 하네스가 규칙을 찾아가는 길');
 for (const [k, v] of Object.entries(docs)) console.log(`  ${v ? '○' : '✗'} ${k}`);
 
@@ -355,6 +398,7 @@ if (declared.broken) {
 }
 // 미결 등록부를 **못 읽은** 것은 판정 불가다. 없는 것(기획 행의 ★)과 다르다.
 if (ledger.error) process.exit(2);
+if (iteration.error) process.exit(2);
 if (settingsErrors.length > 0) process.exit(2);
 if (dead.length > 0) {
   console.error(`해당하는데 살아 있지 않은 게이트 ${dead.length}건: ${dead.map((g) => g.name).join(', ')}\n`);

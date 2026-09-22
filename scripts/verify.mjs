@@ -820,6 +820,25 @@ function verifyGatesReport() {
       alive.out.includes('기획 지표') && alive.out.includes('열린 질문      1개'),
       alive.out.slice(-400));
 
+    // --- 반복 지표: 셋을 섞지 않는다 — 없다 · 형식이 깨졌다 · 읽었다 -------
+    // 막지는 않으므로 exit 는 셋 다 0 이다. **말이 달라야 한다.**
+    record(G, '반복 절이 없으면 "기록 없음"', 'pass',
+      alive.out.includes('기록 없음'), alive.out.slice(-400));
+
+    writeFileSync(join(root, 'STATUS.md'),
+      '# 상태\n\n## 이번 반복\n\n<!-- 형식 예시: - 시작: 2000-01-01 -->\n- 시작: 언젠가\n- 목표: 무엇\n');
+    const badDate = runScript(script, [root], { env: wired.env });
+    record(G, '반복 날짜가 깨졌으면 "못 읽었다" (주석 속 예시를 값으로 읽지 않는다)', 'block',
+      badDate.out.includes('시작일을 못 읽었다') && !badDate.out.includes('2000-01-01 시작'),
+      badDate.out.slice(-400));
+
+    writeFileSync(join(root, 'STATUS.md'),
+      '# 상태\n\n## 이번 반복\n\n- 시작: 2026-01-01\n- 목표: 로그인이 된다\n');
+    const good = runScript(script, [root], { env: wired.env });
+    record(G, '반복 날짜를 읽으면 나이와 목표가 보인다', 'pass',
+      good.code === 0 && /\d+일째/.test(good.out) && good.out.includes('로그인이 된다'),
+      good.out.slice(-400));
+
     // 스택을 못 알아보면 통과가 아니다.
     rmSync(join(root, 'pyproject.toml'));
     const unknown = runScript(script, [root], { env: wired.env });
