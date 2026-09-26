@@ -29,15 +29,13 @@ echo '{"tool_name":"Edit","tool_input":{"file_path":"<경로>"}}' \
 ## 설치
 
 ```bash
-node adapters/git/install.mjs <저장소>    # pre-commit · commit-msg
+node adapters/git/install.mjs <저장소>   # 커밋 계층. 저장소마다
+node adapters/claude-code/install.mjs    # 도구 계층. 전역 한 번. --apply
 ```
 
-남의 훅이 있으면 **거부하고 멈춘다**(exit 1). 말없이 덮지 않는다.
-
-Claude Code 훅은 **사용자 레벨**(`~/.claude/settings.json`)에. 형식은
-`template/.claude/settings.json.tpl`. 프로젝트 `.claude/` 는 보통 git 밖이라
-거기 걸면 워크트리에서 훅이 없다 — 조용히. `timeout` 은 게이트 내부 타이머보다
-**길게**.
+git 쪽은 남의 훅이 있으면 **거부하고 멈춘다**(exit 1) — 파일 하나라 덮어쓰기밖에
+없다. Claude Code 쪽은 배열이라 공존한다. 전역인 이유: 프로젝트 `.claude/` 는
+보통 git 밖이라 거기 걸면 워크트리에서 훅이 없다 — 조용히.
 
 ```bash
 for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check $f; done

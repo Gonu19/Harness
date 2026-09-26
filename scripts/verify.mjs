@@ -965,6 +965,18 @@ function verifyGatesReport() {
     record(G, '도구 계층 + OPEN.md 가 있으면 → exit 0', 'pass',
       alive.code === 0, `exit=${alive.code}\n${alive.out.slice(-300)}`);
 
+    // 계층 결손은 **게이트별 표에 안 보인다** — 한 계층에만 살아도 「산다」라서다.
+    // 그래서 "전부 산다" 와 "Claude Code 에서만 산다" 가 같은 초록이 된다.
+    record(G, 'git 계층이 비면 exit 0 이라도 말한다', 'pass',
+      alive.code === 0 && alive.out.includes('git 계층이 비어 있다')
+      && alive.out.includes('Claude Code 안에서만'), alive.out.slice(-500));
+
+    // 짝 — 두 계층이 다 살면 이 경고가 **없어야** 한다. 안 그러면 늘 뜨는 잔소리고,
+    // 늘 뜨는 경고는 안 읽힌다.
+    const both = runScript(script, [REPO], { env: wired.env });
+    record(G, '두 계층이 다 살면 계층 경고가 없다', 'pass',
+      !both.out.includes('계층이 비어 있다'), both.out.slice(-300));
+
     // 기획 지표는 **단계 선언 없이 항상** 보여야 한다. 애자일에서 기획은 매 반복에 온다.
     record(G, '기획 지표가 선언 없이도 보인다', 'pass',
       alive.out.includes('기획 지표') && alive.out.includes('고르는 중      1개'),
@@ -1102,6 +1114,100 @@ if (fx.error) {
  * "전부 통과 (0건 실행)" 이 나온다 — 완료 판정이 **아무것도 안 재고 통과를
  * 말하는** 것이다. 그래서 이름이 틀리면, 또는 결과적으로 0건이면 exit 2.
  */
+/**
+ * 검사 13 — Claude Code 훅 설치(`adapters/claude-code/install.mjs`).
+ *
+ * 사람이 손으로 하던 일을 스크립트가 받았다. **가장 위험한 실패는 덮어쓰기다** —
+ * 남의 훅을 지우거나, 깨진 JSON 을 못 읽고 새로 쓰는 것. 둘 다 조용하다.
+ * 그래서 이 검사의 절반은 "쓰지 않았음" 을 확인한다.
+ */
+function verifyClaudeInstall() {
+  const I = 'claude-install';
+  const script = join(REPO, 'adapters', 'claude-code', 'install.mjs');
+  const A = join(REPO, 'adapters', 'claude-code').replace(/\\/g, '/');
+
+  /** 설정 내용을 지정해 만든 빈 홈. `null` 이면 settings.json 자체가 없다. */
+  const home = (raw) => {
+    const h = mkdtempSync(join(tmpdir(), 'harness-inst-'));
+    mkdirSync(join(h, '.claude'), { recursive: true });
+    if (raw !== null) writeFileSync(join(h, '.claude', 'settings.json'), raw);
+    return { dir: h, file: join(h, '.claude', 'settings.json'), env: { USERPROFILE: h, HOME: h } };
+  };
+  const read = (h) => JSON.parse(readFileSync(h.file, 'utf8'));
+  const commands = (j) => Object.values(j.hooks ?? {})
+    .flatMap((g) => g).flatMap((g) => g.hooks ?? []).map((x) => x.command);
+
+  const boxes = [];
+  try {
+    // 1) 미리보기는 **쓰지 않는다.** 승인 전에 쓰면 --apply 가 의미를 잃는다.
+    const fresh = home(null); boxes.push(fresh);
+    const dry = runScript(script, [], { env: fresh.env });
+    record(I, '기본은 미리보기 — 파일을 만들지 않는다', 'pass',
+      dry.code === 0 && !existsSync(fresh.file) && dry.out.includes('추가'),
+      `exit=${dry.code} 파일생성=${existsSync(fresh.file)}`);
+
+    // 2) --apply 는 쓴다. 훅 다섯이 전부 들어가야 한다.
+    const put = runScript(script, ['--apply'], { env: fresh.env });
+    const after = existsSync(fresh.file) ? read(fresh) : {};
+    const mine = existsSync(fresh.file) ? commands(after).filter((c) => c.includes('/claude-code/')) : [];
+    record(I, '--apply 로 훅 다섯이 걸린다', 'pass',
+      put.code === 0 && mine.length === 5, `exit=${put.code} 걸린수=${mine.length}`);
+
+    // 3) 멱등. 두 번 돌려서 늘어나면 죽은 훅과 산 훅이 같이 산다.
+    const again = runScript(script, ['--apply'], { env: fresh.env });
+    record(I, '두 번 돌려도 늘지 않는다', 'pass',
+      again.code === 0 && again.out.includes('바꿀 것 0건')
+      && commands(read(fresh)).filter((c) => c.includes('/claude-code/')).length === 5,
+      again.out.slice(-200));
+
+    // 4) **깨진 JSON 은 판정 불가다.** 새로 쓰면 사람의 설정이 통째로 사라진다.
+    const broken = home('{ "hooks": {'); boxes.push(broken);
+    const bad = runScript(script, ['--apply'], { env: broken.env });
+    record(I, '깨진 JSON → exit 2 이고 원본을 안 건드린다', 'block',
+      bad.code === 2 && readFileSync(broken.file, 'utf8') === '{ "hooks": {',
+      `exit=${bad.code}\n${bad.err.slice(0, 200)}`);
+
+    // 5) 최상위가 객체가 아니어도 같다.
+    const arr = home('[]'); boxes.push(arr);
+    const notObj = runScript(script, ['--apply'], { env: arr.env });
+    record(I, '최상위가 객체가 아니면 → exit 2', 'block',
+      notObj.code === 2 && readFileSync(arr.file, 'utf8') === '[]', `exit=${notObj.code}`);
+
+    // 6) 남의 훅은 같은 matcher 안에서도 살아남는다. git 훅과 다른 점이 여기다.
+    const shared = home(JSON.stringify({
+      permissions: { allow: ['Bash(ls:*)'] },
+      hooks: { PostToolUse: [{ matcher: 'Write|Edit', hooks: [{ type: 'command', command: 'node "C:/남/것.mjs"' }] }] },
+    }, null, 2));
+    boxes.push(shared);
+    const merged = runScript(script, ['--apply'], { env: shared.env });
+    const j = read(shared);
+    record(I, '남의 훅과 다른 키를 보존한다', 'pass',
+      merged.code === 0 && commands(j).includes('node "C:/남/것.mjs"')
+      && j.permissions?.allow?.[0] === 'Bash(ls:*)',
+      `exit=${merged.code} 남의훅=${commands(j).filter((c) => c.includes('남')).length}`);
+
+    // 7) 하네스를 옮기면 옛 경로가 남는다. **찾아서 고쳐야지 하나 더 넣으면 안 된다** —
+    //    죽은 훅이 등록된 채로 남고, 등록 수만 보면 멀쩡해 보인다.
+    const moved = home(JSON.stringify({
+      hooks: { PostToolUse: [{ matcher: 'Write|Edit', hooks: [
+        { type: 'command', command: 'node "X:/옛/adapters/claude-code/edit-check.mjs"', timeout: 300 },
+      ] }] },
+    }, null, 2));
+    boxes.push(moved);
+    const fix = runScript(script, ['--apply'], { env: moved.env });
+    const fixed = commands(read(moved)).filter((c) => c.includes('edit-check.mjs'));
+    record(I, '옛 경로는 고쳐지고 중복이 생기지 않는다', 'pass',
+      fix.code === 0 && fixed.length === 1 && fixed[0].includes(A),
+      `${fixed.length}건: ${fixed.join(' | ')}`);
+
+    // 8) 백업 없이 덮지 않는다.
+    record(I, '덮어쓰기 전에 백업을 남긴다', 'pass',
+      fix.out.includes('백업'), fix.out.slice(0, 200));
+  } finally {
+    for (const b of boxes) rmSync(b.dir, { recursive: true, force: true });
+  }
+}
+
 const SUITES = [
   ['guard-migrations', () => verifyMigrations(fx)],
   ['commit-checklist', () => verifyCommit(fx)],
@@ -1111,6 +1217,7 @@ const SUITES = [
   ['edit-check', () => verifyEditScope(fx)],
   ['edit-check-run', () => verifyEditRun()],
   ['git-hooks', () => verifyGitHooks()],
+  ['claude-install', () => verifyClaudeInstall()],
   ['apply-template', () => verifyApplyTemplate()],
   ['e2e-이식', () => verifyEndToEnd()],
   ['gates-report', () => verifyGatesReport()],

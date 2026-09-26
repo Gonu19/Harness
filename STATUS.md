@@ -29,10 +29,10 @@
 
 `claudeMdExcludes` 는 **사용자 스코프에도 먹는다**(0a 분기 A). `session-log` 발화도 봤다.
 
-## 이식 — `apply-template` · `install` · `gates-report` + `/harness-init`
+## 이식 — 스크립트가 놓고 스킬이 채운다 (`D4`)
 
-**스크립트가 놓고 스킬이 채운다**(`D4`). 명령과 절차는 `docs/이식-절차.md`.
-세 스크립트 다 회귀에 있다.
+`apply-template` · **두 계층 `install`** · `gates-report` · `/harness-init`.
+절차는 `docs/이식-절차.md`. 스킬 빼고 전부 회귀에 있다.
 
 ## 애자일 — 단계가 아니라 바퀴
 

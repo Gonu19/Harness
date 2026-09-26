@@ -500,6 +500,26 @@ if (iteration.missing) {
   console.log(`  목표  ${iteration.goal ?? '(없다 — 끝났는지 판정할 수 없다)'}`);
 }
 
+// 계층 하나가 통째로 비어 있는 것은 **개별 게이트로는 안 보인다.** 위 표는
+// 게이트가 한 계층에만 살아도 「산다」를 주기 때문이다. 그런데 계층마다 사는
+// 범위가 다르다 — 도구 계층은 Claude Code 에서만, git 계층은 어느 에이전트든.
+// 그래서 "전부 산다" 와 "이 에이전트에서만 산다" 가 같은 초록으로 보인다.
+//
+// **막지는 않는다.** 하네스를 Claude Code 에서만 쓰기로 정한 사람도 있고,
+// 거짓 차단은 게이트를 꺼지게 한다(제2원칙). 대신 보이게만 한다.
+const liveGit = Object.values(gitHooks).filter(Boolean).length;
+if (gates.some((g) => g.applies) && (liveGit === 0 || registered.size === 0)) {
+  console.log('\n계층 — 게이트가 어디까지 따라가나');
+  if (liveGit === 0) {
+    console.log('  ★ git 계층이 비어 있다. 이 저장소의 게이트는 **Claude Code 안에서만** 산다');
+    console.log('    다른 에이전트·손 커밋에는 게이트가 없다 → `adapters/git/install.mjs`');
+  }
+  if (registered.size === 0) {
+    console.log('  ★ 도구 계층이 비어 있다. 편집 직후 검사가 없고, 커밋 게이트는 `--no-verify` 로 뚫린다');
+    console.log('    → `adapters/claude-code/install.mjs` (미리보기 후 --apply)');
+  }
+}
+
 console.log('\n문서 포인터 — 다른 하네스가 규칙을 찾아가는 길');
 for (const [k, v] of Object.entries(docs)) console.log(`  ${v ? '○' : '✗'} ${k}`);
 

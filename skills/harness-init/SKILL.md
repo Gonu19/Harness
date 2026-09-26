@@ -23,11 +23,32 @@ description: 빈 폴더(또는 old/ 에 이전 기획물만 있는 폴더)에서
 
 ## 절차
 
-### 1. 놓는다
+### 1. 놓는다 — 저장소 · 문서 · 커밋 계층 게이트
 
 ```bash
+git init <프로젝트>                                       # 이미 저장소면 건너뛴다
 node <하네스>/scripts/apply-template.mjs <프로젝트> [--with old,reference]
+node <하네스>/adapters/git/install.mjs   <프로젝트>       # pre-commit · commit-msg
 ```
+
+**셋을 다 해야 1단계가 끝난다.** 특히 세 번째를 빠뜨리기 쉬운데, 빠뜨려도
+조용하다 — Claude Code 훅은 **전역**이라 이미 걸려 있고, `gates-report` 는
+게이트가 **한 계층에만 살아도** 통과를 준다. 그러면 git 계층이 통째로 없는
+채로 "완료" 판정이 나오고, **다른 에이전트에서는 게이트가 하나도 없다.**
+
+`git init` 이 먼저인 이유: git 훅은 `.git/hooks/` 에 놓인다. 저장소가 없으면
+`install.mjs` 가 exit 2 로 멈춘다.
+
+도구 계층(Claude Code 훅)은 **전역이라 한 번만** 건다. 걸려 있는지 확인한다 —
+인자 없이 돌리면 **계획만 보여 주고 아무것도 쓰지 않는다**:
+
+```bash
+node <하네스>/adapters/claude-code/install.mjs          # 미리보기
+node <하네스>/adapters/claude-code/install.mjs --apply  # 사람이 승인한 뒤
+```
+
+「바꿀 것 0건」이면 이미 걸려 있는 것이다. **`--apply` 는 사람 승인 없이 돌리지
+마라** — 이 프로젝트가 아니라 **그 사람의 모든 프로젝트**에 영향이 간다.
 
 `--with` 는 **해당할 때만**. `old/` 는 이전 기획물이 있을 때, `Reference/` 는
 사용자가 외부 재료를 올릴 자리가 필요할 때. 빈 인덱스 표를 만들어 두면
@@ -177,6 +198,7 @@ node <하네스>/scripts/budget.mjs       <프로젝트>   # exit 0
 ## 하지 않는 것
 
 - **파일 놓기** — 스크립트가 한다
-- **훅 등록** — `~/.claude/settings.json` 은 사용자 전역이라 사람이 한 번 한다
+- **전역 훅을 말없이 걸기** — `install.mjs` 를 인자 없이 돌려 **계획만 보여 주고**,
+  `--apply` 는 사람이 승인한 뒤다. `~/.claude/settings.json` 은 이 프로젝트 밖이다
 - **`git push`** — 원격은 사람이 한다
 - **`--force` 로 밀어붙이기** — 거부가 나오면 멈추고 알린다
