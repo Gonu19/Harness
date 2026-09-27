@@ -21,7 +21,7 @@ AI 코딩 에이전트가 **"검사를 안 했다"와 "검사를 통과했다"�
 
 | # | 기능 | 완료 판정 |
 |---|---|---|
-| F1 | **게이트** — 편집 직후·커밋 전·턴 끝 | `node scripts/verify.mjs --only guard-migrations,commit-checklist,git-command,edit-check,edit-check-run,script-writes,git-hooks,budget,stop-check` |
+| F1 | **게이트** — 편집 직후·커밋 전·턴 끝 | `node scripts/verify.mjs --only guard-migrations,commit-checklist,git-command,edit-check,edit-check-run,script-writes,git-hooks,budget,stop-check,block-log` |
 | F2 | **이식** — 스크립트가 놓고 `/harness-init` 이 채운다 | `node scripts/verify.mjs --only apply-template,claude-install,e2e-이식` · 스킬은 첫 실제 이식이 판정 |
 | F3 | **반복** — `/harness-retro` 가 닫는다 | `node scripts/verify.mjs --only gates-report` 의 반복 지표까지 · 스킬은 `72c983a` 회고로 봤다 |
 | F4 | **생존 판정** — "깔았다" 와 "돈다" 를 가른다 | `node scripts/verify.mjs --only gates-report` |

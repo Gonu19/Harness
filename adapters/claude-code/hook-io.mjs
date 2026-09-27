@@ -15,6 +15,11 @@
  * 가고 에이전트는 그냥 지나간다. 그래서 "못 했다"도 exit 2 로 말한다.
  */
 
+import { logBlock, REPEAT_LINE } from '../../core/blocklog.mjs';
+
+/** 막을 때 기록에 적을 맥락. `guard` 와 `parseInput` 이 채운다. */
+const context = { gate: 'unknown', session: undefined, cwd: undefined };
+
 /**
  * 훅 입력을 읽는다.
  *
@@ -44,8 +49,11 @@ export function notMine() {
  * stdout 의 JSON 이 모델에게 전달되는 본문이고, exit 2 가 그 전달을 켜는
  * 스위치다. 둘 중 하나만 있으면 전달되지 않는다.
  */
-export function block(reason) {
-  process.stdout.write(JSON.stringify({ decision: 'block', reason }));
+export function block(reason, kind = 'block') {
+  logBlock({ layer: 'claude-code', gate: context.gate, kind,
+             head: String(reason).split('\n')[0].slice(0, 200),
+             session: context.session, cwd: context.cwd ?? process.cwd() });
+  process.stdout.write(JSON.stringify({ decision: 'block', reason: `${reason}\n\n${REPEAT_LINE}` }));
   process.exit(2);
 }
 
@@ -57,7 +65,7 @@ export function block(reason) {
  */
 export function cannotCheck(what, detail) {
   block(`검사를 돌리지 못했다 — ${what}\n\n${detail}\n\n` +
-        '이건 코드가 틀렸다는 뜻이 아니다. 검사 자체가 성립하지 않았다는 뜻이다.');
+        '이건 코드가 틀렸다는 뜻이 아니다. 검사 자체가 성립하지 않았다는 뜻이다.', 'cannot');
 }
 
 /**
@@ -67,6 +75,7 @@ export function cannotCheck(what, detail) {
  * 그건 통과와 구별되지 않는다. 훅이 자기 버그로 죽는 경우까지 exit 2 로 만든다.
  */
 export async function guard(name, body) {
+  context.gate = name;
   process.on('unhandledRejection', (error) => {
     cannotCheck(`${name} 내부 오류`, String(error?.stack || error));
   });
@@ -87,7 +96,10 @@ export function editedFile(input) {
 /** 입력 JSON. 파싱 실패는 "내 소관 아님"이 아니라 판정 불가다. */
 export function parseInput(raw, name) {
   try {
-    return JSON.parse(raw || '{}');
+    const input = JSON.parse(raw || '{}');
+    context.session = input?.session_id;
+    context.cwd = input?.cwd;
+    return input;
   } catch (error) {
     cannotCheck(`${name} 입력 파싱`, String(error));
   }

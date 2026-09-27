@@ -30,6 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { implemented } from '../core/editcheck.mjs';
 import { UNFILLED } from '../core/commit.mjs';
 import { parseFeatures } from '../core/done.mjs';
+import { summarize } from '../core/blocklog.mjs';
 
 const target = resolve(process.argv[2] ?? process.cwd());
 
@@ -499,6 +500,24 @@ if (!ledger.missing) {
 
 // --- 반복 지표 — 역시 보여 주기만 한다 -------------------------------------
 const iteration = readIteration(target);
+// --- 차단 기록 — 세지 않고 보여 준다(D14) ------------------------------------
+//
+// 같은 이유로 되풀이해 막히는지는 하네스가 막지 않는다. 몇 번이 많은지는
+// 도구가 모른다. 보여 주고 판단은 사람이 한다.
+{
+  const b = summarize(target);
+  console.log('\n차단 기록 (최근 7일) — 판단은 사람이 한다');
+  if (b.missing) console.log('  기록 없음 — 아직 막힌 적이 없거나, 기록 파일이 없다');
+  else if (b.error) console.log(`  ✗ 기록을 읽지 못했다 — **없는 것과 다른 사실이다**\n      ${b.error}`);
+  else if (b.total === 0) console.log('  이 저장소에서 막힌 적 없다');
+  else {
+    console.log(`  ${b.total}건`);
+    if (b.worst && b.worst.count >= 2) {
+      console.log(`  같은 이유 되풀이 최대 ${b.worst.count}번 — [${b.worst.gate}] ${b.worst.head}`);
+    }
+  }
+}
+
 console.log('\n이번 반복 — 판단은 사람이 한다');
 if (iteration.missing) {
   console.log('  기록 없음 — STATUS.md 에 「이번 반복」 절이 없다. 회고가 남을 자리가 없다');

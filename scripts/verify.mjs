@@ -37,6 +37,12 @@ const VERBOSE = process.argv.includes('--verbose');
  * 검사 구현의 위치. **구조를 옮기면 여기만 고친다.**
  * 옮긴 뒤 같은 사례가 같은 결과를 내는지가 이관 성공의 판정이다.
  */
+// 회귀는 일부러 수백 번 막힌다. 그 차단이 **사람의 실제 기록**(D14)에 섞이면
+// gates-report 의 되풀이 지표가 회귀 소음이 된다. 이 프로세스와 자식 전부를
+// 임시 기록으로 돌린다.
+const BLOCK_LOG = join(mkdtempSync(join(tmpdir(), 'harness-blocklog-')), 'blocks.jsonl');
+process.env.HARNESS_BLOCK_LOG = BLOCK_LOG;
+
 const CC = join(REPO, 'adapters', 'claude-code');
 const HOOK = {
   edit: join(CC, 'edit-check.mjs'),
@@ -1360,6 +1366,53 @@ function verifyStopCheck() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 검사 11 — 차단 기록 (D14). **막으면 남기고, 통과는 안 남긴다.** 세지 않는다.
+// ---------------------------------------------------------------------------
+function verifyBlockLog() {
+  const L = 'block-log';
+  const lines = () => (existsSync(BLOCK_LOG) ? readFileSync(BLOCK_LOG, 'utf8').split('\n').filter(Boolean) : []);
+
+  const before = lines().length;
+  const broken = runHook(HOOK.stop, '{ 깨진', REPO);
+  const added = lines().slice(before).map((l) => JSON.parse(l));
+  record(L, '막으면 한 줄 남긴다 (게이트·종류)', 'pass',
+    broken.code === 2 && added.length === 1 && added[0].gate === 'stop-check' && added[0].kind === 'cannot',
+    JSON.stringify(added));
+  record(L, '막는 말 끝에 되풀이 금지 한 줄이 붙는다', 'pass',
+    broken.out.includes('같은 시도를 되풀이하지 마라'), broken.out.slice(-200));
+
+  const mid = lines().length;
+  const quiet = runHook(HOOK.commit, { tool_name: 'Read', tool_input: {} }, REPO);
+  record(L, '통과·소관 아님은 남기지 않는다', 'block',
+    quiet.code === 0 && lines().length === mid, `exit=${quiet.code} 늘어난 줄=${lines().length - mid}`);
+
+  // git 계층도 남긴다 — 앞선 e2e·git-hooks 검사가 실제 커밋을 막았다.
+  record(L, 'git 계층의 차단도 남는다', 'pass',
+    lines().some((l) => JSON.parse(l).layer === 'git'), '');
+
+  // gates-report 요약 — 되풀이를 말하되 막지 않는다.
+  const root = mkdtempSync(join(tmpdir(), 'harness-blk-'));
+  const log = join(root, '..', `blk-${Date.now()}.jsonl`);
+  try {
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    const at = new Date().toISOString();
+    const e = (head, session = 's') => JSON.stringify({ at, layer: 'claude-code', gate: 'commit-checklist', kind: 'block', head, session, cwd: root });
+    writeFileSync(log, [e('같은 이유'), e('같은 이유'), e('같은 이유'), e('다른 이유')].join('\n') + '\n');
+    const rep = runScript(join(REPO, 'scripts', 'gates-report.mjs'), [root], { env: { HARNESS_BLOCK_LOG: log } });
+    record(L, '같은 이유 되풀이를 말한다 — 막지는 않는다', 'pass',
+      rep.out.includes('되풀이 최대 3번') && rep.out.includes('4건'), rep.out.slice(-500));
+
+    writeFileSync(log, [e('하나', 'a'), e('둘', 'b')].join('\n') + '\n');
+    const once = runScript(join(REPO, 'scripts', 'gates-report.mjs'), [root], { env: { HARNESS_BLOCK_LOG: log } });
+    record(L, '한 번씩이면 되풀이라 말하지 않는다', 'block',
+      once.out.includes('2건') && !once.out.includes('되풀이 최대'), once.out.slice(-500));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(log, { force: true });
+  }
+}
+
 const SUITES = [
   ['guard-migrations', () => verifyMigrations(fx)],
   ['commit-checklist', () => verifyCommit(fx)],
@@ -1375,6 +1428,7 @@ const SUITES = [
   ['gates-report', () => verifyGatesReport()],
   ['verify-only', () => verifyOnlyFlag()],
   ['stop-check', () => verifyStopCheck()],
+  ['block-log', () => verifyBlockLog()],
 ];
 const onlyIndex = process.argv.indexOf('--only');
 const ONLY = onlyIndex >= 0

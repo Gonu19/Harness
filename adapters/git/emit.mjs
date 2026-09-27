@@ -15,7 +15,14 @@
  * 읽히고, 그건 게이트가 실제로 주는 보장보다 강한 믿음이다.
  */
 
+import { logBlock, REPEAT_LINE } from '../../core/blocklog.mjs';
+
 export function emitGit(verdict, hookName) {
+  if (verdict.verdict === 'block' || verdict.verdict === 'cannot') {
+    // git 훅은 세션을 모른다. gates-report 가 날짜로 묶는다.
+    logBlock({ layer: 'git', gate: hookName, kind: verdict.verdict, cwd: process.cwd(),
+               head: String(verdict.reason ?? verdict.what ?? '').split('\n')[0].slice(0, 200) });
+  }
   switch (verdict.verdict) {
     case 'skip':
     case 'pass':
@@ -25,7 +32,8 @@ export function emitGit(verdict, hookName) {
     case 'block':
       process.stderr.write(
         `\n[${hookName}] 커밋을 멈춘다.\n\n${verdict.reason}\n\n` +
-        `(이 게이트는 \`--no-verify\` 로 넘길 수 있다. 넘기려는 순간이 설계를 다시 볼 때다.)\n\n`
+        `(이 게이트는 \`--no-verify\` 로 넘길 수 있다. 넘기려는 순간이 설계를 다시 볼 때다.)\n` +
+        `${REPEAT_LINE}\n\n`
       );
       process.exit(1);
       break;
@@ -34,7 +42,8 @@ export function emitGit(verdict, hookName) {
       process.stderr.write(
         `\n[${hookName}] 검사를 돌리지 못했다 — ${verdict.what}\n\n${verdict.detail}\n\n` +
         '이건 커밋 내용이 틀렸다는 뜻이 아니다. 검사 자체가 성립하지 않았다는 뜻이다.\n' +
-        '**통과가 아니므로 멈춘다.** 검사가 돌 수 있게 만든 뒤 다시 커밋해라.\n\n'
+        '**통과가 아니므로 멈춘다.** 검사가 돌 수 있게 만든 뒤 다시 커밋해라.\n' +
+        `${REPEAT_LINE}\n\n`
       );
       process.exit(1);
       break;

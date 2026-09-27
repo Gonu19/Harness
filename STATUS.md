@@ -2,7 +2,7 @@
 > **읽을 때:** 세션 시작 직후
 > **크기:** 3KB 이하. 넘으면 `.claude/rules/` 나 `decisions/` 로 갈 때가 된 것이다
 
-# 지금 상태 (2026-09-22)
+# 지금 상태 (2026-09-27)
 
 ## 이번 반복
 
@@ -11,12 +11,8 @@
 
 ## 구조
 
-`core/` 가 판정하고 `adapters/` 가 종료 코드로 옮긴다. 제1원칙이
-`core/verdict.mjs` 의 네 값(`skip`·`pass`·`block`·`cannot`)이 되어,
-**인코딩이 달라져도 `cannot` 은 `pass` 로 접히지 않는다.**
-
-`adapters/claude-code/` 는 Claude Code 에서만 돌지만 **우회 수단이 없다.**
-`adapters/git/` 은 어느 에이전트든 돌지만 `--no-verify` 로 뚫린다. 상보다.
+`core/` 가 판정(`skip`·`pass`·`block`·`cannot`), 어댑터가 종료 코드. 도구 계층은
+Claude Code 에서만·우회 불가, git 계층은 어디서나·`--no-verify` 로 뚫림. 상보다.
 
 ## 되는 것 — 변조 회귀로 검증됨 (`verify` 가 센다)
 
@@ -38,13 +34,10 @@
 
 ## 애자일 — 단계가 아니라 바퀴
 
-- 결정 닫힘에 `OPEN.md` 동반 게이트 — diff 로만 판정
-- 반복: 「이번 반복」 → `/harness-retro`(`D5`). `gates-report` 가 활동별로 줄을 선다
-- 구현 전 PRD·C4(`D7`) — 빈 저장소 → 이식 → 첫 구현을 git 훅만으로 끝까지 확인
-- 기능 완료 판정은 명령(`D8`), `done.mjs F<n>` 으로 돌린다(`D11`)
-- 예산은 항상 읽는 문서에만, 밀린 지뢰는 `docs/지뢰.md`(`D10`)
-- 활동은 컨텍스트로 가른다 — 이식본 `cycle.md`(`D12`). 게이트 없음
-- 위험 명령은 권한 `ask` 로 묻는다 — 이식본 `.claude/settings.json`(`D13`)
+반복은 `/harness-retro`(`D5`), 구현 전 PRD·C4(`D7`), 완료 판정 `done.mjs`(`D8`·`D11`),
+활동은 컨텍스트로(`D12`), 위험 명령은 `ask`(`D13`), 차단은 기록만(`D14`).
+무엇이 왜인지는 `ls decisions/`.
+빈 저장소 → 이식 → 첫 구현을 git 훅만으로 끝까지 확인했다(`verify` e2e).
 
 ## 다음
 
@@ -56,5 +49,5 @@
   Gradle 데몬과 tsc 의 실제 판정은 못 봤다 — `verify` 가 매번 찍는다
 - **`/harness-init` 은 아직 안 돌았다.** 스킬은 회귀로 검증할 수 없다 —
   첫 실제 온보딩이 판정이다
-- **`stop-check` 는 실제 Claude Code 에서 발화를 못 봤다.** 등록은 사람이
-  `install.mjs --apply` 로 한다. 그 전까지 `gates-report` 는 exit 1 이 맞다
+- **`stop-check` 는 실제 Claude Code 에서 발화를 못 봤다.** 등록은 됐다
+  (`gates-report`). 등록 뒤 새 세션에서 소스를 고친 턴이 한 번 막히는지 본다
