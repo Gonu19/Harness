@@ -1,2 +1,5 @@
 build/
 node_modules/
+
+# 개인 설정 — 모델·규칙 제외. 전역 제외 설정에 기대지 않는다(없는 기계에서 커밋된다)
+.claude/settings.local.json

@@ -13,5 +13,5 @@
 `commit-msg`)이 커밋을 막는다. 무엇이 걸려 있는지는:
 
 ```bash
-node A:/project/Harness/scripts/gates-report.mjs .
+node scripts/gates-report.mjs .
 ```

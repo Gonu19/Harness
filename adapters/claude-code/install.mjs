@@ -7,7 +7,7 @@
  *
  * ## 왜 스크립트인가 — 사람이 하던 일이었다
  *
- * 템플릿(`template/.claude/settings.json.tpl`)을 손으로 옮겨 붙이는 방식에는
+ * 템플릿(옛 `template/.claude/settings.json.tpl` — 지웠다)을 손으로 옮겨 붙이는 방식에는
  * **조용한 실패가 하나 박혀 있었다**: 템플릿의 경로가 하드코딩이라
  * "실제 하네스 위치로 바꿔라" 는 주석에 의존했다. 안 바꾸면 훅은 등록되고,
  * 오류도 없고, **영원히 안 돈다.** 스크립트는 자기 위치를 알아서 그 지뢰가 없다.
@@ -45,7 +45,8 @@ const DIR = HERE.replace(/\\/g, '/');
 const HARNESS_HOME = dirname(dirname(HERE)).replace(/\\/g, '/');
 
 /**
- * 걸 훅. `template/.claude/settings.json.tpl` 과 같은 내용이되 **경로가 실측**이다.
+ * 걸 훅. **이 표가 유일한 원본이다** — 예시 템플릿을 따로 두었더니 훅이 늘 때 그쪽만
+ * 낡았다(Stop·SessionStart 기준점이 빠진 채 남아 있었다). 경로는 실측이다.
  *
  * `timeout` 은 게이트 내부 타이머보다 길어야 한다. 프레임워크가 먼저 죽이면
  * stderr 가 안 나가고, 안 나간 판정은 통과처럼 보인다.

@@ -880,6 +880,11 @@ function verifyApplyTemplate() {
     runScript(script, [bare]);
     record(A, '--with 없으면 old/·Reference/ 를 만들지 않는다', 'block',
       !existsSync(join(bare, 'old')) && !existsSync(join(bare, 'Reference')), '');
+    // 개인 설정은 --with 와 무관하게 버전관리 밖이다. 전역 제외 설정에 기대면
+    // 그것이 없는 기계에서 커밋된다.
+    const bareIgnore = existsSync(join(bare, '.gitignore')) ? readFileSync(join(bare, '.gitignore'), 'utf8') : '';
+    record(A, '개인 설정(settings.local.json)은 늘 gitignore 에 들어간다', 'pass',
+      bareIgnore.split(/\r?\n/).includes('.claude/settings.local.json'), bareIgnore);
     rmSync(bare, { recursive: true, force: true });
 
     const bad = runScript(script, [opt, '--with', 'nope']);

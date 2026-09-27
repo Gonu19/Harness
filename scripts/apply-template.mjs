@@ -74,7 +74,7 @@ const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 �
  */
 const OMITTED = [
   ['template/decisions/README.md.tpl', '결정이 10개를 넘을 때 만든다. 빈 라우팅 표는 읽는 비용만 낸다'],
-  ['template/.claude/settings.json.tpl', '훅 등록 예시다. 사용자 전역에 install.mjs 가 건다 — 프로젝트 settings.json 은 권한 템플릿이다'],
+  ['Claude Code 훅 등록', '사용자 전역에 adapters/claude-code/install.mjs 가 건다 — 프로젝트 settings.json 은 권한(ask)만 담는다'],
 ];
 
 /**
@@ -176,7 +176,10 @@ for (const { from, to, what } of FILES) {
 // 기존 파일을 덮지 않는다는 규칙은 여기서도 지킨다. 줄을 더하기만 하고
 // 아무것도 지우지 않는다. 그래서 별도 범주로 보고한다 — "놓았다" 와
 // "남의 파일에 손댔다" 는 읽는 사람에게 다른 사실이다.
-const ignores = withList.map((w) => OPTIONAL[w].ignore).filter(Boolean);
+// `settings.local.json` 은 **개인** 설정이다(모델·규칙 제외). 이 기계의 전역 제외
+// 설정에 기대면 그것이 없는 협업자에게서 커밋된다 — 공개 저장소면 그대로 올라간다.
+// 그래서 --with 와 무관하게 늘 덧붙인다.
+const ignores = ['.claude/settings.local.json', ...withList.map((w) => OPTIONAL[w].ignore).filter(Boolean)];
 let appended = 0;
 if (ignores.length > 0) {
   const path = join(target, '.gitignore');
@@ -185,7 +188,7 @@ if (ignores.length > 0) {
   if (need.length > 0) {
     if (!dryRun) {
       const body = (current && !current.endsWith('\n') ? `${current}\n` : current)
-        + `${current ? '\n' : ''}# harness — 외부 재료는 버전관리 밖에 둔다 (인덱스만 커밋)\n${need.join('\n')}\n`;
+        + `${current ? '\n' : ''}# harness — 개인 설정·외부 재료는 버전관리 밖에 둔다 (Reference 는 인덱스만 커밋)\n${need.join('\n')}\n`;
       writeFileSync(path, body, 'utf8');
     }
     console.log(`  ${dryRun ? '덧붙일것' : '덧붙임'}  .gitignore  ← ${need.join(' · ')}`);
