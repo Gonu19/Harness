@@ -25,6 +25,7 @@ AI 코딩 에이전트가 **"검사를 안 했다"와 "검사를 통과했다"�
 | F2 | **이식** — 스크립트가 놓고 `/harness-init` 이 채운다 | `node scripts/verify.mjs --only apply-template,claude-install,e2e-이식` · 스킬은 첫 실제 이식이 판정 |
 | F3 | **반복** — `/harness-retro` 가 닫는다 | `node scripts/verify.mjs --only gates-report` 의 반복 지표까지 · 스킬은 `72c983a` 회고로 봤다 |
 | F4 | **생존 판정** — "깔았다" 와 "돈다" 를 가른다 | `node scripts/verify.mjs --only gates-report` |
+| F5 | **복구** — 하네스를 끄고, 마지막 통과로 되돌린다 | `node scripts/verify.mjs --only recovery` |
 
 ## 하지 않는 것
 

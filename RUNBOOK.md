@@ -51,8 +51,13 @@ for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check $f; done
 | 게이트가 낡은 크기를 잰다 | PreToolUse 는 **명령 전체**를 막는다. `git add && git commit` 이면 `add` 가 안 돌아 직전 인덱스를 잰다. **`add` 를 따로 불러라** |
 | `spawn EINVAL` | Windows 는 `.bat`·`.cmd` 를 셸 없이 못 띄운다. `cmd.exe /d /s /c` 로 감싸거나 JS 진입점을 `node` 로 직접 불러 셸을 피한다 |
 | `git checkout -- <경로>` 가 원상복구가 아니다 | **인덱스에서** 복원한다. `HEAD` 를 명시해라 |
-| git 훅이 발화하지 않는다 | 확장자 없는 POSIX 스크립트여야 한다. `.bat`·`.cmd` 는 **조용히** 무시 |
-| Windows `python` 이 파일을 못 연다 | Git Bash 경로(`/a/...`)를 모른다. `A:\...` 로 준다 |
+
+## 비상 — 하네스가 전부 막을 때 · 되돌릴 때
+
+```bash
+echo "이유" > ~/.claude/harness-off   # 도구 계층을 끈다(D15). 지우면 켜진다
+node scripts/done.mjs --green          # 마지막 통과 트리와 되돌리는 명령(D16)
+```
 
 ## 절대 하지 않는 것
 

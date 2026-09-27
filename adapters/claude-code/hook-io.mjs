@@ -16,6 +16,7 @@
  */
 
 import { logBlock, REPEAT_LINE } from '../../core/blocklog.mjs';
+import { readOff } from '../../core/off.mjs';
 
 /** 막을 때 기록에 적을 맥락. `guard` 와 `parseInput` 이 채운다. */
 const context = { gate: 'unknown', session: undefined, cwd: undefined };
@@ -76,6 +77,9 @@ export function cannotCheck(what, detail) {
  */
 export async function guard(name, body) {
   context.gate = name;
+  // 사람이 하네스를 껐다(D15). 하네스 버그가 모든 프로젝트를 막을 때의 비상구다.
+  // 조용하지 않다 — gates-report 가 꺼져 있다고 말하고 실패한다.
+  if (readOff().off) process.exit(0);
   process.on('unhandledRejection', (error) => {
     cannotCheck(`${name} 내부 오류`, String(error?.stack || error));
   });

@@ -128,6 +128,23 @@ function prune(dir) {
   } catch { /* 청소 실패는 판정과 무관하다 */ }
 }
 
+/**
+ * 복구점 — 판정이 **통과한** 마지막 트리. (D16)
+ *
+ * `refs/worktree/` 는 워크트리마다 따로다. ref 가 붙잡고 있으므로 `git gc` 가
+ * 트리를 지우지 않는다. 판정 기록(`done.jsonl`)의 트리는 ref 가 없어 언젠가
+ * 지워질 수 있다 — 그래서 되돌릴 지점은 이 ref 하나다.
+ */
+export const GREEN_REF = 'refs/worktree/harness/green';
+
+export function markGreen(root, tree) {
+  const r = git(root, ['update-ref', GREEN_REF, tree]);
+  return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+}
+
+/** 복구 명령. 추적되는 파일을 그 트리대로 되돌린다 — 그 뒤에 더한 파일은 지워지고, 추적 안 된 파일은 남는다. */
+export const restoreCommand = `git restore --source=${GREEN_REF} --staged --worktree -- .`;
+
 /** 판정 기록을 덧붙인다. 한 호출에 한 줄 — 동시에 써도 줄이 섞이지 않는다. */
 export function recordRun(root, entry) {
   const s = stateDir(root);
@@ -137,7 +154,7 @@ export function recordRun(root, entry) {
   return { ok: true };
 }
 
-function readRuns(dir) {
+export function readRuns(dir) {
   const file = join(dir, 'done.jsonl');
   if (!existsSync(file)) return [];
   return readFileSync(file, 'utf8').split('\n').filter(Boolean)

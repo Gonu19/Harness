@@ -52,7 +52,10 @@ C4Container
 |---|---|
 | `core/` · 두 어댑터 | 없음 — 결정 로그가 생기기 전에 정했다. 근거는 `README.md`·`core/verdict.mjs` |
 | `adapters/claude-code/guard-script-writes` | `D6` |
-| `adapters/claude-code/stop-check` · `session-baseline` · `scripts/done` | `D11` |
+| `adapters/claude-code/stop-check` · `session-baseline` · `scripts/done` | `D11` · 복구점 `D16` |
+| `core/blocklog` (두 어댑터가 막을 때 남긴다) | `D14` |
+| `core/off` (`guard` 가 먼저 본다) | `D15` |
+| `template/.claude/settings.project.json` · `rules/cycle.md` | `D13` · `D12` |
 | `scripts/apply-template` · `skills/` | `D4` · `D5` |
 
 ## 데이터

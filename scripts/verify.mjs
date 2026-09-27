@@ -42,6 +42,10 @@ const VERBOSE = process.argv.includes('--verbose');
 // 임시 기록으로 돌린다.
 const BLOCK_LOG = join(mkdtempSync(join(tmpdir(), 'harness-blocklog-')), 'blocks.jsonl');
 process.env.HARNESS_BLOCK_LOG = BLOCK_LOG;
+// 같은 이유로 끄는 스위치(D15)도 임시 경로로 — 사람이 실제로 꺼 뒀으면 회귀가
+// 전부 "통과" 로 보일 수 있다. 회귀는 켜진 하네스를 잰다.
+const OFF_FILE = join(dirname(BLOCK_LOG), 'harness-off');
+process.env.HARNESS_OFF_FILE = OFF_FILE;
 
 const CC = join(REPO, 'adapters', 'claude-code');
 const HOOK = {
@@ -1413,6 +1417,68 @@ function verifyBlockLog() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 검사 12 — 복구 (D15 · D16). 끄는 스위치와 복구점.
+// ---------------------------------------------------------------------------
+function verifyRecovery() {
+  const R = 'recovery';
+  const done = join(REPO, 'scripts', 'done.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'harness-rec-'));
+  const w = (rel, body) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); };
+  const prd = (cmd) => w('PRD.md', `# PRD\n\n## 핵심 기능\n\n| # | 기능 | 완료 판정 |\n|---|---|---|\n| F1 | 값 | \`${cmd}\` |\n`);
+
+  try {
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    for (const [k, v] of [['user.email', 'r@h.local'], ['user.name', 'r'], ['commit.gpgsign', 'false']]) git(root, ['config', k, v]);
+    prd('node -e "process.exit(0)"');
+    w('a.js', 'v1\n');
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '-m', '시작']);
+
+    // --- 복구점 (D16) ---
+    const none = runScript(done, ['--green', root]);
+    record(R, '통과한 판정이 없으면 복구점도 없다 (exit 1)', 'block', none.code === 1, `exit=${none.code}`);
+
+    runScript(done, ['F1', root]);
+    const green = runScript(done, ['--green', root]);
+    record(R, '통과하면 복구점을 남기고 되돌리는 명령을 말한다', 'pass',
+      green.code === 0 && green.out.includes('git restore --source=refs/worktree/harness/green'), green.out);
+
+    const greenTree = git(root, ['rev-parse', 'refs/worktree/harness/green']).stdout.trim();
+    w('a.js', 'v2 — 망가뜨렸다\n');
+    w('b.js', '나중에 더한 파일\n');
+    git(root, ['add', 'b.js']);
+    prd('node -e "process.exit(1)"');
+    runScript(done, ['F1', root]);
+    record(R, '실패한 판정은 복구점을 옮기지 않는다', 'block',
+      git(root, ['rev-parse', 'refs/worktree/harness/green']).stdout.trim() === greenTree, '');
+
+    const back = spawnSync('git', ['-C', root, 'restore', '--source=refs/worktree/harness/green', '--staged', '--worktree', '--', '.'],
+      { encoding: 'utf8', windowsHide: true });
+    record(R, '되돌리는 명령이 실제로 그 상태로 돌린다', 'pass',
+      // 줄바꿈은 core.autocrlf 에 따라 CRLF 로 나온다 — 내용만 본다.
+      back.status === 0 && readFileSync(join(root, 'a.js'), 'utf8').replace(/\r\n/g, '\n') === 'v1\n' && !existsSync(join(root, 'b.js')),
+      `exit=${back.status} a.js=${JSON.stringify(readFileSync(join(root, 'a.js'), 'utf8'))} b.js=${existsSync(join(root, 'b.js'))}`);
+
+    // --- 끄는 스위치 (D15) ---
+    writeFileSync(OFF_FILE, '하네스 버그로 전부 막힘\n');
+    try {
+      const offHook = runHook(HOOK.stop, '{ 깨진', root);
+      record(R, '꺼져 있으면 도구 계층 훅은 아무것도 막지 않는다', 'pass', offHook.code === 0, `exit=${offHook.code}`);
+      const rep = runScript(join(REPO, 'scripts', 'gates-report.mjs'), [root], { env: fakeHome(true).env });
+      record(R, '꺼져 있으면 gates-report 가 크게 말하고 실패한다', 'block',
+        rep.code === 1 && rep.out.includes('도구 계층이 꺼져 있다') && rep.out.includes('하네스 버그로 전부 막힘'),
+        `exit=${rep.code}\n${rep.out.slice(0, 300)}`);
+    } finally {
+      rmSync(OFF_FILE, { force: true });
+    }
+    const onHook = runHook(HOOK.stop, '{ 깨진', root);
+    record(R, '스위치를 지우면 다시 막는다', 'block', onHook.code === 2, `exit=${onHook.code}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const SUITES = [
   ['guard-migrations', () => verifyMigrations(fx)],
   ['commit-checklist', () => verifyCommit(fx)],
@@ -1429,6 +1495,7 @@ const SUITES = [
   ['verify-only', () => verifyOnlyFlag()],
   ['stop-check', () => verifyStopCheck()],
   ['block-log', () => verifyBlockLog()],
+  ['recovery', () => verifyRecovery()],
 ];
 const onlyIndex = process.argv.indexOf('--only');
 const ONLY = onlyIndex >= 0

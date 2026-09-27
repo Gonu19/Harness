@@ -31,6 +31,7 @@ import { implemented } from '../core/editcheck.mjs';
 import { UNFILLED } from '../core/commit.mjs';
 import { parseFeatures } from '../core/done.mjs';
 import { summarize } from '../core/blocklog.mjs';
+import { readOff, offPath } from '../core/off.mjs';
 
 const target = resolve(process.argv[2] ?? process.cwd());
 
@@ -251,6 +252,11 @@ for (const path of settingsFiles) {
   }
 }
 
+// 사람이 하네스를 껐으면(D15) 등록돼 있어도 **하나도 안 돈다.** 등록 목록을
+// 비워서 표가 그 사실대로 ★ 를 내게 한다 — 꺼진 게이트가 「산다」로 보이면 안 된다.
+const off = readOff();
+if (off.off) registered.clear();
+
 // --- 계층 2: git 훅 ---------------------------------------------------------
 function gitHookInstalled(name) {
   const path = join(gitDir, 'hooks', name);
@@ -437,6 +443,10 @@ const mark = (v) => (v === null ? ' — ' : v ? ' ○ ' : ' ✗ ');
 const cells = (s) => [...s].reduce((n, c) => n + (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿＀-｠]/.test(c) ? 2 : 1), 0);
 const pad = (s, w) => s + ' '.repeat(Math.max(0, w - cells(s)));
 
+if (off.off) {
+  console.log(`\n★★ 도구 계층이 꺼져 있다 — ${offPath()}${off.since ? ` (${off.since})` : ''}` +
+    `${off.reason ? `\n   이유: ${off.reason}` : ''}\n   Claude Code 훅은 등록돼 있어도 아무것도 검사하지 않는다. 켜려면 이 파일을 지운다.`);
+}
 console.log(`\n대상   ${target}`);
 console.log(`스택   ${stacks.length ? stacks.map((s) => s.label).join(' · ') : '(판정 못 함 — 빌드 표식이 없다)'}`);
 console.log(`구현   편집 루프 게이트: ${implemented.map((i) => i.label).join(' · ')}`);
@@ -576,6 +586,12 @@ if (declared.broken) {
 if (ledger.error) process.exit(2);
 if (iteration.error) process.exit(2);
 if (settingsErrors.length > 0) process.exit(2);
+// 꺼져 있으면 git 계층이 살아 「산다」 가 남아도 실패한다. 꺼 둔 채 초록이면
+// 켜는 것을 잊는다 — 비상구가 영구 우회로가 된다.
+if (off.off) {
+  console.error(`도구 계층이 꺼져 있다(${offPath()}) — 켜기 전에는 통과가 아니다.\n`);
+  process.exit(1);
+}
 if (dead.length > 0) {
   console.error(`해당하는데 살아 있지 않은 게이트 ${dead.length}건: ${dead.map((g) => g.name).join(', ')}\n`);
   process.exit(1);
