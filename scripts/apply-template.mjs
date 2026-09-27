@@ -63,6 +63,7 @@ const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 �
   { from: '.claude/rules/cycle.md.tpl', to: '.claude/rules/cycle.md', what: '조건부 규칙 — 활동·탐색·서브에이전트' },
   { from: '.claude/harness-budgets.json', to: '.claude/harness-budgets.json', what: '문서 예산' },
   { from: '.claude/settings.local.json.tpl', to: '.claude/settings.local.json', what: '모델·규칙 제외' },
+  { from: '.claude/settings.project.json.tpl', to: '.claude/settings.json', what: '위험 명령은 사람에게 묻는다 (ask)' },
   { from: 'decisions/_template.md', to: 'decisions/_template.md', what: '결정 서식' },
   { from: 'decisions/OPEN.md.tpl', to: 'decisions/OPEN.md', what: '미결 등록부 — 열린 질문' },
 ];
@@ -73,7 +74,7 @@ const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 �
  */
 const OMITTED = [
   ['template/decisions/README.md.tpl', '결정이 10개를 넘을 때 만든다. 빈 라우팅 표는 읽는 비용만 낸다'],
-  ['template/.claude/settings.json.tpl', '사용자 전역(~/.claude/settings.json)에 사람이 한 번 건다'],
+  ['template/.claude/settings.json.tpl', '훅 등록 예시다. 사용자 전역에 install.mjs 가 건다 — 프로젝트 settings.json 은 권한 템플릿이다'],
 ];
 
 /**

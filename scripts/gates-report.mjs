@@ -439,7 +439,17 @@ const pad = (s, w) => s + ' '.repeat(Math.max(0, w - cells(s)));
 console.log(`\n대상   ${target}`);
 console.log(`스택   ${stacks.length ? stacks.map((s) => s.label).join(' · ') : '(판정 못 함 — 빌드 표식이 없다)'}`);
 console.log(`구현   편집 루프 게이트: ${implemented.map((i) => i.label).join(' · ')}`);
-console.log(`하네스 Claude Code 등록 ${registered.size}건 · git 훅 ${Object.values(gitHooks).filter(Boolean).length}/2\n`);
+console.log(`하네스 Claude Code 등록 ${registered.size}건 · git 훅 ${Object.values(gitHooks).filter(Boolean).length}/2`);
+
+// 권한 ask 규칙 — **막지 않고 보여 준다**(D13). 어떤 명령을 물을지는 프로젝트마다
+// 판단이 달라, 없다고 막으면 거짓 차단이다. 다만 없는 것이 조용하면 안 된다.
+const askRules = settingsFiles.flatMap((p) => {
+  const r = readJson(p);
+  return Array.isArray(r.data?.permissions?.ask) ? r.data.permissions.ask : [];
+});
+console.log(askRules.length > 0
+  ? `권한   되돌리기 어려운 명령에 묻는 규칙 ${askRules.length}줄${askRules.some((a) => /git push/.test(a)) ? '' : ' — git push 는 없다'}\n`
+  : '권한   묻는 규칙(permissions.ask)이 없다 — git push · reset --hard 도 묻지 않고 돈다\n');
 
 console.log(`${pad('활동', 8)}${pad('게이트', 26)}에이전트 git  상태`);
 console.log('─'.repeat(66));

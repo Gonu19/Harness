@@ -809,6 +809,14 @@ function verifyApplyTemplate() {
     record(A, '사람의 입구 README.md 가 놓인다', 'pass',
       existsSync(join(root, 'README.md')), '');
 
+    // D13 — 놓인 공용 설정이 **유효한 JSON 이고** ask 규칙을 가진다. 깨진 설정은
+    // Claude Code 가 무시할 수 있고, 무시된 권한 규칙은 조용하다.
+    let perms = null;
+    try { perms = JSON.parse(readFileSync(join(root, '.claude', 'settings.json'), 'utf8')).permissions; } catch { /* 아래서 실패 */ }
+    record(A, '공용 settings.json 에 git push 를 묻는 규칙이 있다', 'pass',
+      Array.isArray(perms?.ask) && perms.ask.includes('Bash(git push *)') && !perms.deny,
+      JSON.stringify(perms));
+
     // --- 멱등 -------------------------------------------------------------
     const second = runScript(script, [root]);
     record(A, '두 번째 적용은 전부 "같음" (멱등)', 'pass',
@@ -983,6 +991,18 @@ function verifyGatesReport() {
     record(G, 'git 계층이 비면 exit 0 이라도 말한다', 'pass',
       alive.code === 0 && alive.out.includes('git 계층이 비어 있다')
       && alive.out.includes('Claude Code 안에서만'), alive.out.slice(-500));
+
+    // D13 — 권한 ask 규칙은 막지 않고 보여 준다. 없는 것이 조용하면 안 된다.
+    record(G, '묻는 규칙이 없으면 exit 0 이라도 말한다', 'block',
+      alive.code === 0 && alive.out.includes('permissions.ask)이 없다'), alive.out.slice(0, 400));
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'settings.json'),
+      JSON.stringify({ permissions: { ask: ['Bash(git push *)'] } }));
+    const asked = runScript(script, [root], { env: wired.env });
+    record(G, '묻는 규칙이 있으면 줄 수를 말한다', 'pass',
+      asked.code === 0 && asked.out.includes('묻는 규칙 1줄') && !asked.out.includes('git push 는 없다'),
+      asked.out.slice(0, 400));
+    rmSync(join(root, '.claude', 'settings.json'), { force: true });
 
     // 짝 — 두 계층이 다 살면 이 경고가 **없어야** 한다. 안 그러면 늘 뜨는 잔소리고,
     // 늘 뜨는 경고는 안 읽힌다.
