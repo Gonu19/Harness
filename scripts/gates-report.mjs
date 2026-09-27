@@ -29,6 +29,7 @@ import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { implemented } from '../core/editcheck.mjs';
 import { UNFILLED } from '../core/commit.mjs';
+import { parseFeatures } from '../core/done.mjs';
 
 const target = resolve(process.argv[2] ?? process.cwd());
 
@@ -194,24 +195,14 @@ function readFeatures(root) {
   let text;
   try { text = readFileSync(path, 'utf8'); } catch (error) { return { error: String(error) }; }
 
-  const section = text.replace(/<!--[\s\S]*?-->/g, '').split(/^## /m).find((s) => s.startsWith('핵심 기능'));
-  if (!section) return { features: [], noTable: true };
-
-  const rows = section.split('\n')
-    .filter((l) => l.trim().startsWith('|'))
-    .map((l) => l.split('|').map((c) => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1))
-    .filter((cells) => cells.length >= 3 && !/^-+$/.test(cells[0]) && cells[0] !== '#');
+  // 읽는 규칙은 Stop 게이트(`core/done.mjs`)와 **같은 것**이다. 두 곳이 다르게
+  // 읽으면 표는 "명령이 있다" 는데 게이트는 "없다" 고 한다.
+  const rows = parseFeatures(text);
 
   // 표가 아니라 목록으로 적힌 옛 PRD 면 판정 열이 없다 — "0개" 와 구별해 알린다.
   if (rows.length === 0) return { features: [], noTable: true };
 
-  return {
-    features: rows.map((cells) => {
-      const verdict = cells[cells.length - 1];
-      const unfilled = /<채울 것/.test(verdict);
-      return { id: cells[0], has: !unfilled && /`[^`]+`/.test(verdict) };
-    }),
-  };
+  return { features: rows.map((f) => ({ id: f.id, has: f.command !== null })) };
 }
 
 /** 닫힌 결정 수. `_`·`README` 로 시작하는 것은 결정이 아니다. */
@@ -251,7 +242,7 @@ for (const path of settingsFiles) {
     for (const entry of group ?? []) {
       for (const h of entry?.hooks ?? []) {
         const cmd = String(h?.command ?? '');
-        for (const name of ['edit-check', 'guard-migrations', 'commit-checklist', 'guard-script-writes']) {
+        for (const name of ['edit-check', 'guard-migrations', 'commit-checklist', 'guard-script-writes', 'stop-check']) {
           if (cmd.includes(name)) registered.add(name);
         }
       }
@@ -335,6 +326,8 @@ for (const name of ['PRD.md', 'ARCHITECTURE.md']) {
   } catch { prereq.unfilled.push(`${name} (못 읽음)`); }
 }
 const ledger = readOpenLedger(target);
+const featureRows = readFeatures(target);
+const judged = (featureRows.features ?? []).some((f) => f.has);
 const editAlive = implemented.some((i) => stacks.some((s) => s.id === i.id)) && registered.has('edit-check');
 
 const gates = [
@@ -401,6 +394,16 @@ const gates = [
     note: noBuildDeclared
       ? '빌드가 없어 src/ 커밋이 없다 — 열쇠말이 뜰 일이 없다'
       : '테스트 미동반은 **알리기만** 한다 — 주석 수정·리팩터링에 흔해서 막으면 거짓 차단',
+  },
+  {
+    // D11. 판정 명령이 **있을 때만** 해당한다 — 없으면 이 게이트가 물을 것이 없고,
+    // 그 부재는 아래 「핵심 기능」 지표가 말한다.
+    activity: '',
+    name: '완료 판정 실행 (D11)',
+    applies: judged,
+    agent: registered.has('stop-check'),
+    git: null,   // git 은 턴이 끝나는 때를 모른다
+    note: judged ? '' : 'PRD 에 판정 명령이 있는 기능이 없다 — 물을 것이 없다',
   },
   {
     activity: '문서화',

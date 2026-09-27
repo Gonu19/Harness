@@ -42,6 +42,8 @@ const HOOK = {
   edit: join(CC, 'edit-check.mjs'),
   migrations: join(CC, 'guard-migrations.mjs'),
   commit: join(CC, 'commit-checklist.mjs'),
+  stop: join(CC, 'stop-check.mjs'),
+  baseline: join(CC, 'session-baseline.mjs'),
 };
 const GIT_COMMAND_LIB = join(CC, 'git-command.mjs');
 
@@ -91,12 +93,13 @@ function runScript(path, args = [], opts = {}) {
 }
 
 /** 훅 등록 상태를 통제한 가짜 홈. `null` 이면 훅이 하나도 없는 홈이다. */
-function fakeHome(register) {
+function fakeHome(register, { withStop = true } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'harness-home-'));
   mkdirSync(join(home, '.claude'), { recursive: true });
   const H = join(REPO, 'adapters', 'claude-code').replace(/\\/g, '/');
   const settings = register
     ? { hooks: {
+        ...(withStop ? { Stop: [{ hooks: [{ type: 'command', command: `node "${H}/stop-check.mjs"` }] }] } : {}),
         PostToolUse: [{ matcher: 'Write|Edit', hooks: [{ type: 'command', command: `node "${H}/edit-check.mjs"` }] }],
         PreToolUse: [
           { matcher: 'Write|Edit|Bash', hooks: [{ type: 'command', command: `node "${H}/guard-migrations.mjs"` }] },
@@ -1009,6 +1012,14 @@ function verifyGatesReport() {
     const allCmd = runScript(script, [root], { env: wired.env });
     record(G, '전부 명령이면 → 그렇다고 말한다', 'pass',
       allCmd.code === 0 && allCmd.out.includes('전부 판정 명령이 있다'), allCmd.out.slice(-600));
+
+    // D11 — 판정 명령이 있는데 Stop 게이트가 없으면 그 게이트는 없는 것이다.
+    const noStop = fakeHome(true, { withStop: false });
+    const unjudged = runScript(script, [root], { env: noStop.env });
+    record(G, '판정 명령이 있는데 stop-check 가 없으면 → ★ · exit 1', 'block',
+      unjudged.code === 1 && /완료 판정 실행 \(D11\).*★/.test(unjudged.out), unjudged.out.slice(-600));
+    rmSync(noStop.home, { recursive: true, force: true });
+
     writeFileSync(join(root, 'PRD.md'), '# PRD\n\n<채울 것: 목표>\n');
 
     record(G, '칸이 남은 선행 문서는 ★ 가 아니라 알림', 'pass',
@@ -1156,12 +1167,12 @@ function verifyClaudeInstall() {
       dry.code === 0 && !existsSync(fresh.file) && dry.out.includes('추가'),
       `exit=${dry.code} 파일생성=${existsSync(fresh.file)}`);
 
-    // 2) --apply 는 쓴다. 훅 다섯이 전부 들어가야 한다.
+    // 2) --apply 는 쓴다. 훅 일곱이 전부 들어가야 한다.
     const put = runScript(script, ['--apply'], { env: fresh.env });
     const after = existsSync(fresh.file) ? read(fresh) : {};
     const mine = existsSync(fresh.file) ? commands(after).filter((c) => c.includes('/claude-code/')) : [];
-    record(I, '--apply 로 훅 다섯이 걸린다', 'pass',
-      put.code === 0 && mine.length === 5, `exit=${put.code} 걸린수=${mine.length}`);
+    record(I, '--apply 로 훅 일곱이 걸린다', 'pass',
+      put.code === 0 && mine.length === 7, `exit=${put.code} 걸린수=${mine.length}`);
 
     // 2b) 이식된 문서는 절대 경로 대신 `$HARNESS_HOME` 으로 하네스를 부른다.
     //     값이 안 걸리면 문서의 명령이 전부 틀린 경로가 된다.
@@ -1173,7 +1184,7 @@ function verifyClaudeInstall() {
     const again = runScript(script, ['--apply'], { env: fresh.env });
     record(I, '두 번 돌려도 늘지 않는다', 'pass',
       again.code === 0 && again.out.includes('바꿀 것 0건')
-      && commands(read(fresh)).filter((c) => c.includes('/claude-code/')).length === 5,
+      && commands(read(fresh)).filter((c) => c.includes('/claude-code/')).length === 7,
       again.out.slice(-200));
 
     // 4) **깨진 JSON 은 판정 불가다.** 새로 쓰면 사람의 설정이 통째로 사라진다.
@@ -1235,6 +1246,100 @@ function verifyClaudeInstall() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 검사 10 — stop-check (D11). **판정 명령이 돌았는가** 를 턴 끝에 묻는다.
+//
+// 짝의 중심은 통과 쪽이다. Stop 은 턴마다 발화하므로 거짓 차단이 곧 모든 턴의
+// 지연이다 — 안 바뀐 세션 · 문서만 바뀐 세션 · 이미 한 번 막은 턴 · 판정 명령이
+// 없는 PRD 는 반드시 지나가야 한다.
+// ---------------------------------------------------------------------------
+function verifyStopCheck() {
+  const S = 'stop-check';
+  const done = join(REPO, 'scripts', 'done.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'harness-stop-'));
+  const w = (rel, body) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); };
+  const stop = (sid, extra = {}) => runHook(HOOK.stop,
+    { hook_event_name: 'Stop', session_id: sid, cwd: root, stop_hook_active: false, ...extra }, root);
+  const prd = (cmd) => w('PRD.md', '# PRD\n\n## 핵심 기능\n\n| # | 기능 | 완료 판정 |\n|---|---|---|\n' +
+    `| F1 | 더하기 | \`${cmd}\` |\n`);
+
+  try {
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    for (const [k, v] of [['user.email', 's@h.local'], ['user.name', 's'], ['commit.gpgsign', 'false']]) git(root, ['config', k, v]);
+    prd('node -e "process.exit(0)"');
+    w('a.js', 'module.exports = 1;\n');
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '-m', '시작']);
+
+    runHook(HOOK.baseline, { hook_event_name: 'SessionStart', session_id: 's1', cwd: root }, root);
+    const sfile = (id) => join(root, '.git', 'harness', `session-${id}.json`);
+    record(S, 'SessionStart 가 기준점을 남긴다', 'pass', existsSync(sfile('s1')), '');
+
+    const quiet = stop('s1');
+    record(S, '바뀐 것이 없으면 통과', 'pass', quiet.code === 0, `exit=${quiet.code}\n${quiet.out}`);
+
+    w('README.md', '# 문서만\n');
+    const docsOnly = stop('s1');
+    record(S, '문서만 바뀌면 통과', 'pass', docsOnly.code === 0, `exit=${docsOnly.code}\n${docsOnly.out}`);
+
+    w('a.js', 'module.exports = 2;\n');
+    const changed = stop('s1');
+    record(S, '소스가 바뀌었는데 판정 기록이 없다 → 막는다', 'block',
+      changed.code === 2 && changed.out.includes('done.mjs') && changed.out.includes('"decision":"block"'),
+      `exit=${changed.code}\n${changed.out.slice(0, 300)}`);
+    record(S, '실제 인덱스를 건드리지 않는다', 'block',
+      git(root, ['diff', '--cached', '--name-only']).stdout.trim() === '', '');
+
+    const again = stop('s1', { stop_hook_active: true });
+    record(S, '이미 한 번 막았으면 → 통과 (턴당 한 번)', 'pass', again.code === 0, `exit=${again.code}`);
+
+    const ran = runScript(done, ['F1', root]);
+    record(S, 'done.mjs F1 → 명령이 통과하면 exit 0', 'pass', ran.code === 0, `exit=${ran.code}\n${ran.err}`);
+    const after = stop('s1');
+    record(S, '지금 트리로 판정이 돌았으면 → 통과', 'pass', after.code === 0, `exit=${after.code}\n${after.out.slice(0, 300)}`);
+
+    // 판정을 돌리고 커밋해도 기록이 산다 — 트리 **내용**으로 비교한다.
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '-m', '다음']);
+    const committed = stop('s1');
+    record(S, '판정 뒤 커밋해도 → 통과 (내용이 같다)', 'pass', committed.code === 0, `exit=${committed.code}`);
+
+    w('a.js', 'module.exports = 3;\n');
+    const stale = stop('s1');
+    record(S, '판정 뒤 소스가 또 바뀌면 → 막는다', 'block', stale.code === 2, `exit=${stale.code}`);
+
+    // 실패한 판정도 **돌린 것이다.** 결과까지 요구하면 모든 중간 턴이 막힌다.
+    prd('node -e "process.exit(3)"');
+    const failed = runScript(done, ['F1', root]);
+    record(S, 'done.mjs — 명령이 실패하면 exit 1', 'block', failed.code === 1, `exit=${failed.code}`);
+    record(S, '실패한 판정도 돌린 것이다 → 통과', 'pass', stop('s1').code === 0, '');
+
+    const unknown = runScript(done, ['F9', root]);
+    record(S, 'done.mjs — 없는 기능 → exit 2', 'block',
+      unknown.code === 2 && unknown.err.includes('F9'), `exit=${unknown.code}\n${unknown.err}`);
+
+    // 기준점이 없으면 HEAD 로 물러나고, 막을 때 그 사실을 말한다.
+    w('a.js', 'module.exports = 4;\n');
+    const orphan = stop('s-없음');
+    record(S, '기준점이 없으면 HEAD 기준으로 막고 그 사실을 말한다', 'block',
+      orphan.code === 2 && orphan.out.includes('HEAD 기준'), `exit=${orphan.code}\n${orphan.out.slice(-200)}`);
+
+    w('PRD.md', '# PRD\n\n## 핵심 기능\n\n| # | 기능 | 완료 판정 |\n|---|---|---|\n| F1 | 더하기 | <채울 것: 명령> |\n');
+    const noCmd = stop('s1');
+    record(S, 'PRD 에 판정 명령이 없으면 → 소관 아님', 'pass', noCmd.code === 0, `exit=${noCmd.code}`);
+
+    const outside = mkdtempSync(join(tmpdir(), 'harness-nogit-'));
+    const nogit = runHook(HOOK.stop, { hook_event_name: 'Stop', session_id: 'x', cwd: outside }, outside);
+    record(S, 'git 저장소 밖 → 소관 아님', 'pass', nogit.code === 0, `exit=${nogit.code}`);
+    rmSync(outside, { recursive: true, force: true });
+
+    const broken = runHook(HOOK.stop, '{ 깨진', root);
+    record(S, '입력이 깨지면 → 판정 불가(exit 2)', 'block', broken.code === 2, `exit=${broken.code}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const SUITES = [
   ['guard-migrations', () => verifyMigrations(fx)],
   ['commit-checklist', () => verifyCommit(fx)],
@@ -1249,6 +1354,7 @@ const SUITES = [
   ['e2e-이식', () => verifyEndToEnd()],
   ['gates-report', () => verifyGatesReport()],
   ['verify-only', () => verifyOnlyFlag()],
+  ['stop-check', () => verifyStopCheck()],
 ];
 const onlyIndex = process.argv.indexOf('--only');
 const ONLY = onlyIndex >= 0

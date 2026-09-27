@@ -16,14 +16,15 @@ AI 코딩 에이전트가 **"검사를 안 했다"와 "검사를 통과했다"�
 
 ## 핵심 기능
 
-판정은 `node scripts/verify.mjs --only <검사>` 다. 끝났다고 말하기 전에 돌린다.
+끝났다고 말하기 전에 `node scripts/done.mjs <F#>` 로 돌린다 — 판정 칸의 첫 백틱을
+실행하고 돌렸다는 기록을 남긴다(`D11`).
 
-| # | 기능 | 완료 판정 (`--only` 뒤) |
+| # | 기능 | 완료 판정 |
 |---|---|---|
-| F1 | **게이트** — 편집 직후·커밋 전 | `guard-migrations,commit-checklist,git-command,edit-check,edit-check-run,script-writes,git-hooks,budget` |
-| F2 | **이식** — 스크립트가 놓고 `/harness-init` 이 채운다 | `apply-template,claude-install,e2e-이식` · 스킬은 첫 실제 이식이 판정 |
-| F3 | **반복** — `/harness-retro` 가 닫는다 | `gates-report` 의 반복 지표까지 · 스킬은 `72c983a` 회고로 봤다 |
-| F4 | **생존 판정** — "깔았다" 와 "돈다" 를 가른다 | `gates-report` |
+| F1 | **게이트** — 편집 직후·커밋 전·턴 끝 | `node scripts/verify.mjs --only guard-migrations,commit-checklist,git-command,edit-check,edit-check-run,script-writes,git-hooks,budget,stop-check` |
+| F2 | **이식** — 스크립트가 놓고 `/harness-init` 이 채운다 | `node scripts/verify.mjs --only apply-template,claude-install,e2e-이식` · 스킬은 첫 실제 이식이 판정 |
+| F3 | **반복** — `/harness-retro` 가 닫는다 | `node scripts/verify.mjs --only gates-report` 의 반복 지표까지 · 스킬은 `72c983a` 회고로 봤다 |
+| F4 | **생존 판정** — "깔았다" 와 "돈다" 를 가른다 | `node scripts/verify.mjs --only gates-report` |
 
 ## 하지 않는 것
 

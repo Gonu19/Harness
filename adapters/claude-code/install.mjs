@@ -60,6 +60,11 @@ const HOOKS = [
   { file: 'guard-script-writes.mjs', event: 'PreToolUse', matcher: 'Bash',
     timeout: 30, statusMessage: '스크립트 쓰기 차단' },
   { file: 'session-log.mjs', event: 'SessionStart', matcher: null, timeout: 15 },
+  // D11 — 기준점을 남기고, 턴이 끝날 때 완료 판정이 돌았는지 묻는다.
+  // 워킹트리 해시(`git add -A` 를 복사 인덱스에)가 큰 저장소에서 수 초 걸린다.
+  { file: 'session-baseline.mjs', event: 'SessionStart', matcher: null, timeout: 60 },
+  { file: 'stop-check.mjs', event: 'Stop', matcher: null,
+    timeout: 60, statusMessage: '완료 판정 확인' },
 ];
 
 const apply = process.argv.includes('--apply');

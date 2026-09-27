@@ -8,6 +8,7 @@
 node scripts/verify.mjs                   # 판정이 맞나 (변조 회귀)
 node scripts/gates-report.mjs <저장소>    # 그 판정이 걸려 있나
 node scripts/budget.mjs <저장소>          # 문서가 한도 안인가 (쓰는 중에)
+node scripts/done.mjs F<n>                # 기능 판정 + 기록 (Stop 이 본다)
 ```
 
 앞 둘은 하나만 보면 반쪽이다. 종료 코드와 표 읽는 법은 스크립트가 스스로
@@ -51,7 +52,6 @@ for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check $f; done
 | `spawn EINVAL` | Windows 는 `.bat`·`.cmd` 를 셸 없이 못 띄운다. `cmd.exe /d /s /c` 로 감싸거나 JS 진입점을 `node` 로 직접 불러 셸을 피한다 |
 | `git checkout -- <경로>` 가 원상복구가 아니다 | **인덱스에서** 복원한다. `HEAD` 를 명시해라 |
 | git 훅이 발화하지 않는다 | 확장자 없는 POSIX 스크립트여야 한다. `.bat`·`.cmd` 는 **조용히** 무시 |
-| `sed -i` 가 일부만 바꿨다 | 패턴 여럿 중 **안 맞은 것은 조용히 무동작**. 오류가 없다. Edit 로 한 곳씩 |
 | Windows `python` 이 파일을 못 연다 | Git Bash 경로(`/a/...`)를 모른다. `A:\...` 로 준다 |
 
 ## 절대 하지 않는 것

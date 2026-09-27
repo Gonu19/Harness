@@ -52,9 +52,11 @@ C4Container
 |---|---|
 | `core/` · 두 어댑터 | 없음 — 결정 로그가 생기기 전에 정했다. 근거는 `README.md`·`core/verdict.mjs` |
 | `adapters/claude-code/guard-script-writes` | `D6` |
+| `adapters/claude-code/stop-check` · `session-baseline` · `scripts/done` | `D11` |
 | `scripts/apply-template` · `skills/` | `D4` · `D5` |
 
 ## 데이터
 
 DB 없음. 상태는 설정 셋이다 — `.claude/harness-budgets.json`(예산),
 `.claude/harness-gates.json`(`stack:none` 선언), `~/.claude/settings.json`(훅 등록).
+그리고 대상 저장소의 `<git-dir>/harness/` — 세션 기준점과 판정 기록. 커밋되지 않는다(`D11`).

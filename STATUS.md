@@ -26,6 +26,7 @@
 | `commit-checklist` | Bash 가로채기 | `commit-msg` |
 | `edit-check` | Java · TS `tsc` · Py `ast.parse`/mypy | 없다(느려서 값을 잃는다) |
 | `guard-script-writes` | python 파일 쓰기 차단(`D6`) | 없다(쓴 방법을 모른다) |
+| `stop-check` | 턴 끝 — 판정 기록 없으면 한 번 막음(`D11`) | 없다(턴을 모른다) |
 
 `claudeMdExcludes` 는 **사용자 스코프에도 먹는다**(0a 분기 A). `session-log` 발화도 봤다.
 
@@ -40,7 +41,7 @@
 - 결정 닫힘에 `OPEN.md` 동반 게이트 — diff 로만 판정
 - 반복: 「이번 반복」 → `/harness-retro`(`D5`). `gates-report` 가 활동별로 줄을 선다
 - 구현 전 PRD·C4(`D7`) — 빈 저장소 → 이식 → 첫 구현을 git 훅만으로 끝까지 확인
-- 기능 완료 판정은 명령(`D8`). 이 저장소는 `verify --only`
+- 기능 완료 판정은 명령(`D8`), `done.mjs F<n>` 으로 돌린다(`D11`)
 - 예산은 항상 읽는 문서에만, 밀린 지뢰는 `docs/지뢰.md`(`D10`)
 
 ## 다음
@@ -53,3 +54,5 @@
   Gradle 데몬과 tsc 의 실제 판정은 못 봤다 — `verify` 가 매번 찍는다
 - **`/harness-init` 은 아직 안 돌았다.** 스킬은 회귀로 검증할 수 없다 —
   첫 실제 온보딩이 판정이다
+- **`stop-check` 는 실제 Claude Code 에서 발화를 못 봤다.** 등록은 사람이
+  `install.mjs --apply` 로 한다. 그 전까지 `gates-report` 는 exit 1 이 맞다
