@@ -25,7 +25,7 @@ paths:
 ## 이 저장소의 게이트가 살아 있는지
 
 ```bash
-node <하네스 경로>/scripts/gates-report.mjs .
+node "$HARNESS_HOME/scripts/gates-report.mjs" .
 ```
 
 `★ 어느 계층에도 없다` 가 뜨면 그 검사는 **없는 것이다.**

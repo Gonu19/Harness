@@ -796,6 +796,16 @@ function verifyApplyTemplate() {
       !agents.includes('<프로젝트 이름>') && !agents.includes('<하네스 경로>'),
       agents.slice(0, 200));
 
+    // 이 기계의 하네스 경로가 이식본에 박히면 그대로 커밋된다 — 다른 기계에서는
+    // 틀린 명령이 조용히 적혀 있다. 놓인 파일 전부를 본다.
+    const machine = REPO.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+    const leaked = claimed.filter((rel) =>
+      readFileSync(join(root, rel), 'utf8').replace(/\\/g, '/').toLowerCase().includes(machine));
+    record(A, '이식본에 하네스 절대 경로가 없다', 'pass',
+      leaked.length === 0, `박힌 파일: ${leaked.join(', ')}`);
+    record(A, '사람의 입구 README.md 가 놓인다', 'pass',
+      existsSync(join(root, 'README.md')), '');
+
     // --- 멱등 -------------------------------------------------------------
     const second = runScript(script, [root]);
     record(A, '두 번째 적용은 전부 "같음" (멱등)', 'pass',
@@ -1153,6 +1163,12 @@ function verifyClaudeInstall() {
     record(I, '--apply 로 훅 다섯이 걸린다', 'pass',
       put.code === 0 && mine.length === 5, `exit=${put.code} 걸린수=${mine.length}`);
 
+    // 2b) 이식된 문서는 절대 경로 대신 `$HARNESS_HOME` 으로 하네스를 부른다.
+    //     값이 안 걸리면 문서의 명령이 전부 틀린 경로가 된다.
+    const HOME_WANT = REPO.replace(/\\/g, '/').replace(/\/$/, '');
+    record(I, '--apply 로 env.HARNESS_HOME 이 하네스 뿌리로 걸린다', 'pass',
+      after.env?.HARNESS_HOME === HOME_WANT, `값=${after.env?.HARNESS_HOME} 기대=${HOME_WANT}`);
+
     // 3) 멱등. 두 번 돌려서 늘어나면 죽은 훅과 산 훅이 같이 산다.
     const again = runScript(script, ['--apply'], { env: fresh.env });
     record(I, '두 번 돌려도 늘지 않는다', 'pass',
@@ -1176,6 +1192,7 @@ function verifyClaudeInstall() {
     // 6) 남의 훅은 같은 matcher 안에서도 살아남는다. git 훅과 다른 점이 여기다.
     const shared = home(JSON.stringify({
       permissions: { allow: ['Bash(ls:*)'] },
+      env: { OTHER: '남의 값' },
       hooks: { PostToolUse: [{ matcher: 'Write|Edit', hooks: [{ type: 'command', command: 'node "C:/남/것.mjs"' }] }] },
     }, null, 2));
     boxes.push(shared);
@@ -1183,12 +1200,14 @@ function verifyClaudeInstall() {
     const j = read(shared);
     record(I, '남의 훅과 다른 키를 보존한다', 'pass',
       merged.code === 0 && commands(j).includes('node "C:/남/것.mjs"')
-      && j.permissions?.allow?.[0] === 'Bash(ls:*)',
+      && j.permissions?.allow?.[0] === 'Bash(ls:*)'
+      && j.env?.OTHER === '남의 값',
       `exit=${merged.code} 남의훅=${commands(j).filter((c) => c.includes('남')).length}`);
 
     // 7) 하네스를 옮기면 옛 경로가 남는다. **찾아서 고쳐야지 하나 더 넣으면 안 된다** —
     //    죽은 훅이 등록된 채로 남고, 등록 수만 보면 멀쩡해 보인다.
     const moved = home(JSON.stringify({
+      env: { HARNESS_HOME: 'X:/옛' },
       hooks: { PostToolUse: [{ matcher: 'Write|Edit', hooks: [
         { type: 'command', command: 'node "X:/옛/adapters/claude-code/edit-check.mjs"', timeout: 300 },
       ] }] },
@@ -1199,6 +1218,14 @@ function verifyClaudeInstall() {
     record(I, '옛 경로는 고쳐지고 중복이 생기지 않는다', 'pass',
       fix.code === 0 && fixed.length === 1 && fixed[0].includes(A),
       `${fixed.length}건: ${fixed.join(' | ')}`);
+    record(I, '옛 HARNESS_HOME 도 고쳐진다', 'pass',
+      read(moved).env?.HARNESS_HOME === HOME_WANT, `값=${read(moved).env?.HARNESS_HOME}`);
+
+    // 4b) env 가 객체가 아니면 판정 불가다. 덮으면 사람이 적은 값이 사라진다.
+    const badEnv = home('{ "env": "문자열" }'); boxes.push(badEnv);
+    const be = runScript(script, ['--apply'], { env: badEnv.env });
+    record(I, 'env 가 객체가 아니면 → exit 2 이고 원본을 안 건드린다', 'block',
+      be.code === 2 && readFileSync(badEnv.file, 'utf8') === '{ "env": "문자열" }', `exit=${be.code}`);
 
     // 8) 백업 없이 덮지 않는다.
     record(I, '덮어쓰기 전에 백업을 남긴다', 'pass',

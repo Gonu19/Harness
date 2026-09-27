@@ -13,5 +13,8 @@
 `commit-msg`)이 커밋을 막는다. 무엇이 걸려 있는지는:
 
 ```bash
-node <하네스 경로>/scripts/gates-report.mjs .
+node "$HARNESS_HOME/scripts/gates-report.mjs" .
 ```
+
+<!-- HARNESS_HOME 은 하네스를 내려받은 위치다. 기계마다 달라서 문서에 값을 적지
+     않는다. Claude Code 는 install.mjs 가 걸고, 다른 에이전트는 셸에 사람이 건다. -->

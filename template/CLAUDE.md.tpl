@@ -9,6 +9,7 @@
      세션 시작에 그대로 컨텍스트에 실린다. 토큰을 줄이는 것은
      .claude/rules/ 의 paths: 와 claudeMdExcludes 뿐이다. -->
 
-- 훅이 무엇을 막는지는 `.claude/settings.json` 을 봐라.
+- 훅은 사용자 전역에 걸린다 — 이 저장소의 `.claude/` 에는 없다. 무엇이 막히는지는
+  `node "$HARNESS_HOME/scripts/gates-report.mjs" .` 에 물어라.
   **훅이 막은 것을 우회하지 마라** — 우회하려는 순간이 설계를 다시 볼 때다
 - `git push` 는 사람이 수동으로 한다

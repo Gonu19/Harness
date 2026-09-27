@@ -49,6 +49,7 @@ const TPL = join(REPO, 'template');
  * `when` 이 있는 항목은 조건부다 — 없는 것이 정상이라 완료 판정에 넣지 않는다.
  */
 const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 내용은 바뀐다.
+  { from: 'README.md.tpl', to: 'README.md', what: '사람의 입구 — 문서 지도' },
   { from: 'AGENTS.md.tpl', to: 'AGENTS.md', what: '규칙의 진본' },
   { from: 'CLAUDE.md.tpl', to: 'CLAUDE.md', what: 'Claude Code 포인터' },
   { from: 'GEMINI.md.tpl', to: 'GEMINI.md', what: 'Gemini·Antigravity 포인터' },
@@ -126,12 +127,15 @@ if (!existsSync(target)) {
   process.exit(2);
 }
 
-/** 자리표시자를 채운다. 남아 있으면 사람이 채울 것이라 그대로 둔다. */
+/**
+ * 자리표시자를 채운다. 남아 있으면 사람이 채울 것이라 그대로 둔다.
+ *
+ * **하네스 위치는 채우지 않는다.** 템플릿은 `$HARNESS_HOME` 으로 부른다 —
+ * 여기서 이 기계의 절대 경로를 박으면 그 경로가 커밋되어 협업자·다른 기계에서
+ * 틀린 명령이 조용히 적혀 있게 된다. 값은 기계마다 `install.mjs` 가 건다.
+ */
 function fill(text) {
-  return text
-    .replaceAll('<하네스 경로>', REPO.replace(/\\/g, '/'))
-    .replaceAll('<하네스>', REPO.replace(/\\/g, '/'))
-    .replaceAll('<프로젝트 이름>', basename(target));
+  return text.replaceAll('<프로젝트 이름>', basename(target));
 }
 
 let placed = 0;
@@ -202,10 +206,13 @@ if (refused.length > 0) {
   process.exit(1);
 }
 
+const at = (rel) => join(REPO, rel).replace(/\\/g, '/');
 console.log(
   '\n다음 — 이것으로 끝이 아니다. 파일을 놓았다는 사실은 게이트가 돈다는 뜻이 아니다.\n' +
-  `  1. git 훅:   node adapters/git/install.mjs ${target}\n` +
-  '  2. CC 훅:    ~/.claude/settings.json 에 한 번만 (template/.claude/settings.json.tpl)\n' +
-  `  3. 완료 판정: node scripts/gates-report.mjs ${target}   ← exit 0 이어야 끝이다\n`
+  `  1. git 훅:   node ${at('adapters/git/install.mjs')} ${target}\n` +
+  `  2. CC 훅:    node ${at('adapters/claude-code/install.mjs')}   ← 전역에 한 번. 미리보기 뒤 --apply\n` +
+  `  3. 완료 판정: node ${at('scripts/gates-report.mjs')} ${target}   ← exit 0 이어야 끝이다\n` +
+  '\n  놓인 문서는 하네스를 `$HARNESS_HOME` 으로 부른다. 2번이 Claude Code 에 건다.\n' +
+  `  다른 에이전트·터미널에서는 셸에 건다:  HARNESS_HOME=${REPO.replace(/\\/g, '/')}\n`
 );
 process.exit(0);

@@ -37,6 +37,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DIR = HERE.replace(/\\/g, '/');
 
 /**
+ * 이식된 문서가 하네스를 부르는 이름. `env` 로 걸어 Claude Code 세션의 셸에 들어간다.
+ *
+ * 문서에 절대 경로를 박으면 **그 기계에서만 맞는 지도**가 커밋된다 — 협업자·다른
+ * 기계에서는 틀린 명령이 조용히 적혀 있다. 이름을 적고 값은 기계마다 여기서 건다.
+ */
+const HARNESS_HOME = dirname(dirname(HERE)).replace(/\\/g, '/');
+
+/**
  * 걸 훅. `template/.claude/settings.json.tpl` 과 같은 내용이되 **경로가 실측**이다.
  *
  * `timeout` 은 게이트 내부 타이머보다 길어야 한다. 프레임워크가 먼저 죽이면
@@ -85,6 +93,11 @@ if (existsSync(settingsPath)) {
 if (settings.hooks === undefined) settings.hooks = {};
 if (settings.hooks === null || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
   console.error(`설정의 hooks 가 객체가 아니다: ${settingsPath}\n\n판정할 수 없어 멈춘다.`);
+  process.exit(2);
+}
+if (settings.env !== undefined
+    && (settings.env === null || typeof settings.env !== 'object' || Array.isArray(settings.env))) {
+  console.error(`설정의 env 가 객체가 아니다: ${settingsPath}\n\n판정할 수 없어 멈춘다.`);
   process.exit(2);
 }
 
@@ -139,12 +152,19 @@ for (const p of plan) {
     (p.why ? `\n${' '.repeat(58)}${p.why}` : ''));
 }
 
+// 하네스를 옮겼으면 값이 옛 경로다 — 훅처럼 **고친다.** 남의 env 키는 건드리지 않는다.
+const currentHome = settings.env?.HARNESS_HOME;
+const envAction = currentHome === undefined ? '추가' : currentHome === HARNESS_HOME ? '그대로' : '고침';
+console.log(`${'env HARNESS_HOME'.padEnd(25)} ${'-'.padEnd(13)} ${'-'.padEnd(17)} ${envAction}` +
+  (envAction === '고침' ? `\n${' '.repeat(58)}${currentHome}` : ''));
+
 const changes = plan.filter((p) => p.action !== '그대로');
+if (envAction !== '그대로') changes.push({ action: envAction });
 const others = Object.values(settings.hooks)
   .flatMap((g) => (Array.isArray(g) ? g : []))
   .flatMap((g) => (Array.isArray(g?.hooks) ? g.hooks : []))
   .filter((x) => typeof x?.command === 'string' && !/adapters[\\/]claude-code[\\/]/.test(x.command));
-console.log(`\n바꿀 것 ${changes.length}건 · 그대로 ${plan.length - changes.length}건 · 건드리지 않는 남의 훅 ${others.length}건`);
+console.log(`\n바꿀 것 ${changes.length}건 · 그대로 ${plan.length + 1 - changes.length}건 · 건드리지 않는 남의 훅 ${others.length}건`);
 
 if (changes.length === 0) {
   console.log('\n할 일이 없다. 다만 **등록은 발화가 아니다** — 확인은 `node scripts/verify.mjs` 다.');
@@ -169,6 +189,8 @@ for (const p of plan) {
   }
   group.hooks.push(p.want);
 }
+if (envAction !== '그대로') settings.env = { ...(settings.env ?? {}), HARNESS_HOME };
+
 // 비어 버린 matcher 그룹은 남기지 않는다 — 읽는 사람에게 있는 것처럼 보인다.
 for (const [event, groups] of Object.entries(settings.hooks)) {
   if (!Array.isArray(groups)) continue;
@@ -194,4 +216,8 @@ console.log(`썼다  ${settingsPath}
   1. Claude Code 를 새로 띄운다 (실행 중인 세션에는 안 먹는다)
   2. node scripts/verify.mjs        ← 실제로 발화하는지
   3. node scripts/gates-report.mjs  ← 어느 게이트가 사는지
+
+\`HARNESS_HOME\` 은 **Claude Code 세션에만** 들어간다. 이식된 문서가 이 이름으로
+하네스를 부르므로, 다른 에이전트·터미널에서 쓰려면 셸에도 걸어라:
+  HARNESS_HOME=${HARNESS_HOME}
 `);

@@ -91,8 +91,8 @@ git log --oneline --since <「이번 반복」 시작일>   # 첫 회고면 지�
 ### 5. 판정하고 커밋한다
 
 ```bash
-node <하네스>/scripts/budget.mjs .        # 문서가 한도 안인가
-node <하네스>/scripts/gates-report.mjs .  # 네 활동이 산다
+node "$HARNESS_HOME/scripts/budget.mjs" .        # 문서가 한도 안인가
+node "$HARNESS_HOME/scripts/gates-report.mjs" .  # 네 활동이 산다
 ```
 
 커밋 메시지 첫 줄은 `회고: <반복 목표 요약>`. 본문에 **무엇을 배웠나**를 적는다.

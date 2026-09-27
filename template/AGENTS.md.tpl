@@ -29,7 +29,7 @@
 
 ## 게이트
 
-무엇이 막히는지는 훅을 읽지 말고 `node <하네스>/scripts/gates-report.mjs .` 에
+무엇이 막히는지는 훅을 읽지 말고 `node "$HARNESS_HOME/scripts/gates-report.mjs" .` 에
 물어봐라. `★ 어느 계층에도 없다` 가 뜨면 그 검사는 **없는 것이다** —
 걸어 놨다는 사실은 발화한다는 뜻이 아니다.
 

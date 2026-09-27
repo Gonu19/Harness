@@ -33,6 +33,7 @@
 
 `apply-template` · **두 계층 `install`** · `gates-report` · `/harness-init`.
 절차는 `docs/이식-절차.md`. 스킬 빼고 전부 회귀에 있다.
+이식본은 하네스를 `$HARNESS_HOME` 으로 부른다 — 기계 경로를 커밋하지 않는다.
 
 ## 애자일 — 단계가 아니라 바퀴
 
@@ -52,7 +53,7 @@
 
 ## 다음 — 전부 조건부다
 
-`decisions/OPEN.md` 참조. 「고르는 중」은 비었고 「조건 대기」 셋뿐이다.
+`decisions/OPEN.md` 참조.
 
 ## 막힌 것 · 미확인
 
