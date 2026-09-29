@@ -32,6 +32,7 @@ import { UNFILLED } from '../core/commit.mjs';
 import { parseFeatures } from '../core/done.mjs';
 import { summarize } from '../core/blocklog.mjs';
 import { readOff, offPath } from '../core/off.mjs';
+import { loadGates } from '../core/gates.mjs';
 
 const target = resolve(process.argv[2] ?? process.cwd());
 
@@ -71,12 +72,23 @@ const stacks = STACKS.filter((s) => s.markers.some((m) => existsSync(join(target
  *
  * 선언은 기록이라 나중에 읽을 수 있다. 기본값의 침묵과 다르다.
  */
-const declared = (() => {
-  const p = join(target, '.claude', 'harness-gates.json');
-  if (!existsSync(p)) return {};
-  try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return { broken: p }; }
-})();
+// 게이트가 읽는 것과 **같은 로더**를 쓴다. 두 곳이 다르게 읽으면 표는 "선언됐다"
+// 는데 게이트는 기본값으로 돈다.
+const gatesDecl = loadGates(target);
+const declared = gatesDecl.error ? { broken: gatesDecl.error } : { stack: gatesDecl.stack };
 const noBuildDeclared = declared.stack === 'none';
+
+/**
+ * 구현 경로가 **실제로 있나.** 없으면 커밋 게이트의 구현 쪽(D7 선행 문서 · 열쇠말 ·
+ * STATUS 동반)이 이 저장소에서 한 번도 켜지지 않는다. 기본값 `src/` 가 맞지 않는
+ * 저장소(`app/`·`lib/`·`packages/`)가 정확히 그렇다 — 오류 없이 조용하다.
+ */
+const sourceDirsPresent = gatesDecl.source.filter((p) => existsSync(join(target, p)));
+const sourceNote = noBuildDeclared || sourceDirsPresent.length > 0 ? ''
+  : gatesDecl.declared.source
+    ? `**선언한 구현 경로(${gatesDecl.source.join(' · ')})가 하나도 없다** — 구현 커밋에 이 게이트가 안 걸린다`
+    : `**구현 경로 기본값(${gatesDecl.source.join(' · ')})이 이 저장소에 없다** — 구현 커밋에 이 게이트가 안 걸린다.\n` +
+      `          .claude/harness-gates.json 에 {"source": ["app/", …]} 를 선언하라`;
 
 /*
  * `phase` 선언은 **없앴다.** 한때 `{ "phase": "planning" }` 이 있었는데,
@@ -218,8 +230,7 @@ function countDecisions(root) {
   } catch { return null; }
 }
 
-const hasMigrations = existsSync(join(target, 'src', 'main', 'resources', 'db', 'migration'))
-  || dirHas(target, /db[\\/]migration/);
+const hasMigrations = dirHas(target, gatesDecl.migrations.mention);
 
 // --- 계층 1: Claude Code 훅 등록 --------------------------------------------
 function readJson(path) {
@@ -236,6 +247,14 @@ const settingsFiles = [
 
 const registered = new Set();
 const settingsErrors = [];
+/** 셸 명령을 보는 게이트 → 등록된 matcher 들. PowerShell 을 덮는지 본다. */
+const SHELL_GATES = ['guard-migrations', 'commit-checklist', 'guard-script-writes'];
+const shellMatchers = new Map();
+/**
+ * 명령 줄이 "0 이 아니면 2" 로 감싸이지 않은 훅. node 가 뜨지도 못하면(127) Claude Code 는
+ * 그걸 **막지 않는 오류**로 다룬다 — 게이트가 조용히 통과한다(`hook-shell.mjs`).
+ */
+const unwrapped = new Set();
 for (const path of settingsFiles) {
   const r = readJson(path);
   if (r.missing) continue;
@@ -245,12 +264,32 @@ for (const path of settingsFiles) {
       for (const h of entry?.hooks ?? []) {
         const cmd = String(h?.command ?? '');
         for (const name of ['edit-check', 'guard-migrations', 'commit-checklist', 'guard-script-writes', 'stop-check']) {
-          if (cmd.includes(name)) registered.add(name);
+          if (!cmd.includes(name)) continue;
+          registered.add(name);
+          if (!/exit 2/.test(cmd)) unwrapped.add(name);
+          if (SHELL_GATES.includes(name)) {
+            shellMatchers.set(name, [...(shellMatchers.get(name) ?? []), String(entry?.matcher ?? '')]);
+          }
         }
       }
     }
   }
 }
+
+/**
+ * Windows 에서 Claude Code 는 PowerShell 을 **Bash 와 별개의 도구**로 넘긴다.
+ * matcher 가 `Bash` 뿐이면 PowerShell 로 한 커밋에는 훅이 불리지 않는다 —
+ * 등록은 돼 있어 표에는 「산다」 로 나온다. 그 차이를 여기서 말한다.
+ *
+ * matcher 는 정확한 이름 · `|` 목록 · 정규식이다. 비었거나 `*` 면 전부다.
+ */
+function coversTool(matcher, tool) {
+  if (matcher === '' || matcher === '*') return true;
+  if (/^[A-Za-z0-9_|]+$/.test(matcher)) return matcher.split('|').includes(tool);
+  try { return new RegExp(`^(?:${matcher})$`).test(tool); } catch { return false; }
+}
+const psBlind = SHELL_GATES.filter((n) => shellMatchers.has(n)
+  && !shellMatchers.get(n).some((m) => coversTool(m, 'PowerShell')));
 
 // 사람이 하네스를 껐으면(D15) 등록돼 있어도 **하나도 안 돈다.** 등록 목록을
 // 비워서 표가 그 사실대로 ★ 를 내게 한다 — 꺼진 게이트가 「산다」로 보이면 안 된다.
@@ -359,9 +398,12 @@ const gates = [
     git: commitGate.git && prereq.missing.length === 0,
     note: prereq.missing.length > 0
       ? `**${prereq.missing.join('·')} 가 없다** — 구현 전 게이트가 조용히 빠진다`
-      : prereq.unfilled.length > 0
-        ? `채우지 않은 칸: ${prereq.unfilled.join(' · ')} — 이대로는 첫 src/ 커밋이 막힌다`
-        : '',
+      : [
+          prereq.unfilled.length > 0
+            ? `채우지 않은 칸: ${prereq.unfilled.join(' · ')} — 이대로는 첫 구현(${gatesDecl.source.join(' · ')}) 커밋이 막힌다`
+            : '',
+          sourceNote,
+        ].filter(Boolean).join(`\n${' '.repeat(10)}`),
   },
   {
     // **이 행은 구현이 아니라 능력을 묻는다.**
@@ -394,13 +436,15 @@ const gates = [
   {
     activity: 'QA',
     name: '커밋 열쇠말(규모·경로)',
-    // 열쇠말은 `src/` 가 바뀌는 커밋에만 뜬다. 빌드가 없으면 뜰 일이 없다.
-    applies: !noBuildDeclared,
+    // 열쇠말은 구현 경로가 바뀌는 커밋에만 뜬다. `stack:none` 은 "빌드가 없다" 지
+    // "코드가 없다" 가 아니다 — 빌드 없는 스크립트 저장소에도 구현 경로가 있으면 뜬다.
+    applies: !noBuildDeclared || sourceDirsPresent.length > 0,
     agent: commitGate.agent,
     git: commitGate.git,
-    note: noBuildDeclared
-      ? '빌드가 없어 src/ 커밋이 없다 — 열쇠말이 뜰 일이 없다'
-      : '테스트 미동반은 **알리기만** 한다 — 주석 수정·리팩터링에 흔해서 막으면 거짓 차단',
+    note: noBuildDeclared && sourceDirsPresent.length === 0
+      ? '빌드도 구현 경로도 없다 — 열쇠말이 뜰 일이 없다'
+      : sourceNote
+        || '테스트 미동반은 **알리기만** 한다 — 주석 수정·리팩터링에 흔해서 막으면 거짓 차단',
   },
   {
     // D11. 판정 명령이 **있을 때만** 해당한다 — 없으면 이 게이트가 물을 것이 없고,
@@ -418,6 +462,15 @@ const gates = [
     applies: true,
     agent: commitGate.agent,
     git: commitGate.git,
+    note: '',
+  },
+  {
+    // D18. 되돌릴 수 없는 유출이라 활동과 무관하게 **모든 커밋**에 건다.
+    activity: '보안',
+    name: '비밀값 커밋 차단 (D18)',
+    applies: true,
+    agent: commitGate.agent,
+    git: gitHooks['pre-commit'],
     note: '',
   },
   {
@@ -560,6 +613,20 @@ if (gates.some((g) => g.applies) && (liveGit === 0 || registered.size === 0)) {
     console.log('  ★ 도구 계층이 비어 있다. 편집 직후 검사가 없고, 커밋 게이트는 `--no-verify` 로 뚫린다');
     console.log('    → `adapters/claude-code/install.mjs` (미리보기 후 --apply)');
   }
+}
+
+if (unwrapped.size > 0) {
+  console.log(`\n★ node 를 못 띄우면 조용히 통과하는 훅 — ${[...unwrapped].join(' · ')}`);
+  console.log('    명령 줄이 `|| exit 2` 로 감싸이지 않았다. 실행 파일이 없으면 Claude Code 는 막지 않는다');
+  console.log('    → `adapters/claude-code/install.mjs` 를 다시 돌리면 감싼다');
+}
+
+// 등록은 됐는데 **PowerShell 도구에는 안 불리는** 셸 게이트. 막지는 않는다 — Bash
+// 도구만 쓰는 환경도 있다. 다만 Windows 에서는 대개 PowerShell 이 기본이라 보이게 한다.
+if (psBlind.length > 0) {
+  console.log(`\n${process.platform === 'win32' ? '★ ' : ''}셸 게이트가 PowerShell 도구를 안 본다 — ${psBlind.join(' · ')}`);
+  console.log('    matcher 가 Bash 뿐이면 PowerShell 로 한 커밋·파일 쓰기에 훅이 **불리지 않는다**');
+  console.log('    → `adapters/claude-code/install.mjs` 를 다시 돌리면 matcher 를 고친다');
 }
 
 console.log('\n문서 포인터 — 다른 하네스가 규칙을 찾아가는 길');

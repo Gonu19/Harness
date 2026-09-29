@@ -31,6 +31,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { detectShell, hookCommand } from './hook-shell.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** 설정에 적히는 경로. Windows 역슬래시는 JSON 에서 이스케이프가 필요해 슬래시로 통일한다. */
@@ -51,25 +52,50 @@ const HARNESS_HOME = dirname(dirname(HERE)).replace(/\\/g, '/');
  * `timeout` 은 게이트 내부 타이머보다 길어야 한다. 프레임워크가 먼저 죽이면
  * stderr 가 안 나가고, 안 나간 판정은 통과처럼 보인다.
  */
+/*
+ * 셸 게이트의 matcher 에 `PowerShell` 이 있는 이유: Claude Code 는 Windows 에서
+ * PowerShell 을 **Bash 와 별개의 도구**로 넘긴다. `Bash` 만 걸면 PowerShell 로 한
+ * 커밋·파일 쓰기·마이그레이션 수정은 훅이 **아예 불리지 않는다** — 등록은 돼
+ * 있고 오류도 없다. 다른 플랫폼에는 PowerShell 도구가 없어 무해하다.
+ */
 const HOOKS = [
   { file: 'edit-check.mjs', event: 'PostToolUse', matcher: 'Write|Edit',
     timeout: 300, statusMessage: '편집 후 검사', extra: { asyncRewake: true } },
-  { file: 'guard-migrations.mjs', event: 'PreToolUse', matcher: 'Write|Edit|Bash',
+  { file: 'guard-migrations.mjs', event: 'PreToolUse', matcher: 'Write|Edit|Bash|PowerShell',
     timeout: 30, statusMessage: '마이그레이션 보호' },
-  { file: 'commit-checklist.mjs', event: 'PreToolUse', matcher: 'Bash',
+  { file: 'commit-checklist.mjs', event: 'PreToolUse', matcher: 'Bash|PowerShell',
     timeout: 30, statusMessage: '커밋 전 확인' },
-  { file: 'guard-script-writes.mjs', event: 'PreToolUse', matcher: 'Bash',
+  { file: 'guard-script-writes.mjs', event: 'PreToolUse', matcher: 'Bash|PowerShell',
     timeout: 30, statusMessage: '스크립트 쓰기 차단' },
-  { file: 'session-log.mjs', event: 'SessionStart', matcher: null, timeout: 15 },
+  // 기록만 하는 훅 — **막지 않는다**(각 파일 머리 주석). 명령 줄도 감싸지 않는다.
+  { file: 'session-log.mjs', event: 'SessionStart', matcher: null, timeout: 15, record: true },
   // D11 — 기준점을 남기고, 턴이 끝날 때 완료 판정이 돌았는지 묻는다.
   // 워킹트리 해시(`git add -A` 를 복사 인덱스에)가 큰 저장소에서 수 초 걸린다.
-  { file: 'session-baseline.mjs', event: 'SessionStart', matcher: null, timeout: 60 },
+  { file: 'session-baseline.mjs', event: 'SessionStart', matcher: null, timeout: 60, record: true },
   { file: 'stop-check.mjs', event: 'Stop', matcher: null,
     timeout: 60, statusMessage: '완료 판정 확인' },
 ];
 
+/**
+ * 사용자 전역에 거는 **묻기** 규칙(D13 · D15). 하네스를 끄는 스위치와 훅 등록은
+ * 전역에 있으므로 규칙도 전역이어야 한다 — 프로젝트 settings.json 에만 두면 템플릿이
+ * 안 놓인 저장소에서 에이전트가 셸 한 줄로 하네스를 끈다. `Edit(~/.claude/**)` 는
+ * Edit 도구만 덮는다. `echo > ~/.claude/harness-off` 는 지나갔다(실측 검토).
+ *
+ * 남의 규칙은 건드리지 않는다. 없는 것만 더한다.
+ */
+const GLOBAL_ASK = [
+  'Bash(*harness-off*)',
+  'PowerShell(*harness-off*)',
+  'Bash(*.claude/settings*)',
+  'PowerShell(*.claude*settings*)',
+  'Write(~/.claude/**)',
+  'Edit(~/.claude/**)',
+];
+
 const apply = process.argv.includes('--apply');
 const settingsPath = join(homedir(), '.claude', 'settings.json');
+const { shell: SHELL, bash: BASH } = detectShell();
 
 // --- 읽는다 -----------------------------------------------------------------
 //
@@ -106,6 +132,12 @@ if (settings.env !== undefined
   console.error(`설정의 env 가 객체가 아니다: ${settingsPath}\n\n판정할 수 없어 멈춘다.`);
   process.exit(2);
 }
+if (settings.permissions !== undefined
+    && (settings.permissions === null || typeof settings.permissions !== 'object' || Array.isArray(settings.permissions)
+        || (settings.permissions.ask !== undefined && !Array.isArray(settings.permissions.ask)))) {
+  console.error(`설정의 permissions(.ask) 모양이 예상과 다르다: ${settingsPath}\n\n판정할 수 없어 멈춘다.`);
+  process.exit(2);
+}
 
 // --- 계획을 세운다 ----------------------------------------------------------
 //
@@ -124,7 +156,10 @@ const shape = (o) => JSON.stringify(Object.fromEntries(
 for (const h of HOOKS) {
   const want = {
     type: 'command',
-    command: `node "${DIR}/${h.file}"`,
+    // node 가 뜨지도 못하면(127) Claude Code 는 막지 않고 지나간다. 명령 줄에서
+    // "0 이 아니면 2" 로 감싸 그 구멍을 막는다 — 셸 문법이 달라 셸을 적어 둔다.
+    command: hookCommand(`${DIR}/${h.file}`, SHELL, !h.record),
+    shell: SHELL,
     ...(h.extra ?? {}),
     timeout: h.timeout,
     ...(h.statusMessage ? { statusMessage: h.statusMessage } : {}),
@@ -132,17 +167,24 @@ for (const h of HOOKS) {
   const groups = Array.isArray(settings.hooks[h.event]) ? settings.hooks[h.event] : [];
   const mineRe = new RegExp(`adapters[\\\\/]claude-code[\\\\/]${h.file.replace('.', '\\.')}`);
 
-  let found = null;
+  // 우리 것은 **전부** 찾는다. 첫 것만 보면 중복이 영영 안 지워진다 — 실제로
+  // 한 번 잘못 쓰인 설정에 같은 훅이 두 줄 남았다.
+  const all = [];
   for (const g of groups) {
-    const list = Array.isArray(g?.hooks) ? g.hooks : [];
-    const i = list.findIndex((x) => typeof x?.command === 'string' && mineRe.test(x.command));
-    if (i >= 0) { found = { group: g, index: i, entry: list[i] }; break; }
+    for (const x of Array.isArray(g?.hooks) ? g.hooks : []) {
+      if (typeof x?.command === 'string' && mineRe.test(x.command)) all.push({ group: g, entry: x });
+    }
   }
+  const found = all[0] ? { ...all[0], all } : null;
 
   const sameMatcher = found && (found.group.matcher ?? null) === h.matcher;
   if (!found) plan.push({ h, want, action: '추가' });
+  else if (all.length > 1) plan.push({ h, want, found, action: '중복 정리', why: `${all.length}줄 → 1줄` });
   else if (!sameMatcher) plan.push({ h, want, found, action: '이동', why: `matcher ${found.group.matcher ?? '-'} → ${h.matcher ?? '-'}` });
-  else if (found.entry.command !== want.command) plan.push({ h, want, found, action: '경로 고침', why: found.entry.command });
+  else if (found.entry.command !== want.command) {
+    plan.push({ h, want, found, action: found.entry.command.includes(`${DIR}/${h.file}`) ? '명령 고침' : '경로 고침',
+                why: `${found.entry.command}  →  ${want.command}` });
+  }
   else if (shape(found.entry) !== shape(want)) plan.push({ h, want, found, action: '설정 고침' });
   else plan.push({ h, want, found, action: '그대로' });
 }
@@ -164,13 +206,22 @@ const envAction = currentHome === undefined ? '추가' : currentHome === HARNESS
 console.log(`${'env HARNESS_HOME'.padEnd(25)} ${'-'.padEnd(13)} ${'-'.padEnd(17)} ${envAction}` +
   (envAction === '고침' ? `\n${' '.repeat(58)}${currentHome}` : ''));
 
+const haveAsk = new Set(settings.permissions?.ask ?? []);
+const missingAsk = GLOBAL_ASK.filter((r) => !haveAsk.has(r));
+console.log(`${'permissions.ask'.padEnd(25)} ${'-'.padEnd(13)} ${'-'.padEnd(17)} ` +
+  (missingAsk.length ? `추가 ${missingAsk.length}줄` : '그대로') +
+  (missingAsk.length ? `\n${' '.repeat(58)}${missingAsk.join(' · ')}` : ''));
+console.log(`\n훅 셸   ${SHELL}${BASH && SHELL === 'bash' && process.platform === 'win32' ? ` (Git Bash: ${BASH})` : ''}` +
+  (SHELL === 'powershell' ? '  — Git Bash 가 없어 PowerShell 로 감싼다' : ''));
+
 const changes = plan.filter((p) => p.action !== '그대로');
 if (envAction !== '그대로') changes.push({ action: envAction });
+if (missingAsk.length > 0) changes.push({ action: '권한' });
 const others = Object.values(settings.hooks)
   .flatMap((g) => (Array.isArray(g) ? g : []))
   .flatMap((g) => (Array.isArray(g?.hooks) ? g.hooks : []))
   .filter((x) => typeof x?.command === 'string' && !/adapters[\\/]claude-code[\\/]/.test(x.command));
-console.log(`\n바꿀 것 ${changes.length}건 · 그대로 ${plan.length + 1 - changes.length}건 · 건드리지 않는 남의 훅 ${others.length}건`);
+console.log(`\n바꿀 것 ${changes.length}건 · 그대로 ${plan.length + 2 - changes.length}건 · 건드리지 않는 남의 훅 ${others.length}건`);
 
 if (changes.length === 0) {
   console.log('\n할 일이 없다. 다만 **등록은 발화가 아니다** — 확인은 `node scripts/verify.mjs` 다.');
@@ -185,7 +236,14 @@ if (!apply) {
 // --- 쓴다 -------------------------------------------------------------------
 for (const p of plan) {
   if (p.action === '그대로') continue;
-  if (p.found) p.found.group.hooks.splice(p.found.index, 1);  // 이동·고침은 뺀 뒤 다시 넣는다
+  // 이동·고침은 뺀 뒤 다시 넣는다. **위치(index)가 아니라 항목 자체로** 뺀다 —
+  // 계획할 때 적어 둔 위치는 같은 그룹의 앞 항목을 빼는 순간 밀린다. 그 탓에
+  // `commit-checklist` 를 빼려다 옆 훅을, `session-log` 를 빼려다 옆 훅을 지웠다
+  // (실제 사고: 커밋 게이트가 전역 설정에서 **조용히** 사라졌다).
+  for (const { group, entry } of p.found?.all ?? []) {
+    const i = group.hooks.indexOf(entry);
+    if (i >= 0) group.hooks.splice(i, 1);
+  }
   if (!Array.isArray(settings.hooks[p.h.event])) settings.hooks[p.h.event] = [];
   const groups = settings.hooks[p.h.event];
   let group = groups.find((g) => (g?.matcher ?? null) === p.h.matcher && Array.isArray(g?.hooks));
@@ -196,6 +254,9 @@ for (const p of plan) {
   group.hooks.push(p.want);
 }
 if (envAction !== '그대로') settings.env = { ...(settings.env ?? {}), HARNESS_HOME };
+if (missingAsk.length > 0) {
+  settings.permissions = { ...(settings.permissions ?? {}), ask: [...(settings.permissions?.ask ?? []), ...missingAsk] };
+}
 
 // 비어 버린 matcher 그룹은 남기지 않는다 — 읽는 사람에게 있는 것처럼 보인다.
 for (const [event, groups] of Object.entries(settings.hooks)) {
@@ -203,17 +264,39 @@ for (const [event, groups] of Object.entries(settings.hooks)) {
   settings.hooks[event] = groups.filter((g) => !Array.isArray(g?.hooks) || g.hooks.length > 0);
 }
 
+let backupPath = null;
 try {
   mkdirSync(dirname(settingsPath), { recursive: true });
+  let backup = null;
   if (existsSync(settingsPath)) {
-    const backup = `${settingsPath}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    backup = `${settingsPath}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     copyFileSync(settingsPath, backup);
     console.log(`\n백업  ${backup}`);
   }
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+  backupPath = backup;
 } catch (e) {
   console.error(`\n쓰지 못했다: ${e.message}`);
   process.exit(1);
+}
+
+// --- 쓴 것을 다시 읽어 확인한다 -------------------------------------------------
+//
+// "썼다" 는 "맞게 썼다" 가 아니다. 이 스크립트가 훅을 **지운 채** 성공이라고 말한
+// 사고가 실제로 있었다(위치로 빼다 옆 항목을 지웠다). 훅마다 정확히 한 줄인지 본다.
+// 아니면 백업으로 되돌리고 판정 불가로 끝낸다 — 틀린 설정을 남기지 않는다.
+{
+  const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  const cmds = Object.values(written.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? []).map((x) => String(x?.command ?? ''));
+  const wrong = HOOKS
+    .map((h) => ({ file: h.file, n: cmds.filter((c) => c.includes(`claude-code/${h.file}`) || c.includes(`claude-code\\${h.file}`)).length }))
+    .filter(({ n }) => n !== 1);
+  if (wrong.length > 0) {
+    if (backupPath) copyFileSync(backupPath, settingsPath);
+    console.error(`\n**쓴 결과가 틀렸다** — ${wrong.map(({ file, n }) => `${file} ${n}줄`).join(' · ')} (훅마다 1줄이어야 한다)\n` +
+      (backupPath ? `백업으로 되돌렸다: ${backupPath}` : '되돌릴 백업이 없다 — 설정을 직접 확인해라'));
+    process.exit(2);
+  }
 }
 
 console.log(`썼다  ${settingsPath}

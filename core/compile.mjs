@@ -37,21 +37,26 @@ export function scope(file) {
   if (!file || !/\.java$/i.test(file)) return { mine: false, why: 'Java 소스가 아니다' };
   const root = findRoot(file, 'gradle');
   if (!root) return { mine: false, why: 'Gradle 프로젝트가 아니다' };
-  const rel = relPosix(root, file);
-  const task = gradleCompileTask(rel);
+
+  // 멀티 모듈: 소스 세트 경로는 **모듈** 기준이다. 뿌리 기준으로 재면
+  // `app/src/main/java/…` 가 "소스 트리 밖" 이 되어 모듈 전체가 조용히 빠졌다.
+  // 모듈이 뿌리 밖이면(표식이 엇갈렸다) 뿌리를 모듈로 본다.
+  const found = findRoot(file, 'gradleModule');
+  const module = found && (found === root || relPosix(root, found).split('/')[0] !== '..') ? found : root;
+  const task = gradleCompileTask(relPosix(module, file));
   if (!task) return { mine: false, why: '소스 트리 밖이다' };
-  return { mine: true, root, rel, task };
+  return { mine: true, root, module, rel: relPosix(root, file), task };
 }
 
 export async function checkJavaEdit(file) {
   const s = scope(file);
   if (!s.mine) return skip(s.why);
 
-  const { root, rel, task } = s;
+  const { root, module, rel, task } = s;
 
   // 여기부터는 전부 "내 소관인데 못 했다" 다.
-  if (hasShellMeta(root)) {
-    return cannot('프로젝트 경로에 셸 메타문자가 있다', root);
+  if (hasShellMeta(root) || hasShellMeta(module)) {
+    return cannot('프로젝트 경로에 셸 메타문자가 있다', module);
   }
 
   const gradlew = process.platform === 'win32' ? 'gradlew.bat' : 'gradlew';
@@ -68,7 +73,7 @@ export async function checkJavaEdit(file) {
   }
 
   try {
-    const result = await runGradle(wrapper, root, task);
+    const result = await runGradle(wrapper, root, task, module);
 
     if (result.timedOut) {
       return cannot(`${task} 시간 초과`,
@@ -93,10 +98,14 @@ export async function checkJavaEdit(file) {
  * 타임아웃은 프레임워크에 맡기지 않고 직접 잰다 — 프레임워크가 킬하면
  * stderr 전달 없이 사라져서 통과처럼 보인다.
  */
-function runGradle(wrapper, cwd, task) {
+function runGradle(wrapper, cwd, task, module = cwd) {
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
+    // 모듈이 뿌리가 아니면 `-p <모듈>` 로 그 프로젝트의 태스크만 부른다.
+    // `:app:compileJava` 처럼 경로를 이름으로 바꾸지 않는 이유 — settings 에서
+    // 프로젝트 이름을 바꿔 둔 저장소가 있고, 그러면 "태스크 없음" 이 거짓 차단이 된다.
+    const projectArgs = module !== cwd ? ['-p', module] : [];
 
     // Windows 의 `.bat` 은 실행 파일이 아니라 cmd 스크립트다. Node 20+ 는
     // 보안상 셸 없이 `.bat` 을 띄우지 않고 EINVAL 을 던진다. 그래서
@@ -108,8 +117,8 @@ function runGradle(wrapper, cwd, task) {
     const isWin = process.platform === 'win32';
     const command = isWin ? (process.env.ComSpec || 'cmd.exe') : wrapper;
     const args = isWin
-      ? ['/d', '/s', '/c', `""${wrapper}" ${task} --console=plain --quiet"`]
-      : [task, '--console=plain', '--quiet'];
+      ? ['/d', '/s', '/c', `""${wrapper}" ${projectArgs.length ? `-p "${module}" ` : ''}${task} --console=plain --quiet"`]
+      : [...projectArgs, task, '--console=plain', '--quiet'];
 
     const child = spawn(command, args, {
       cwd,

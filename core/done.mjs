@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { git, gitPaths } from './git.mjs';
 import { skip, pass, block, cannot } from './verdict.mjs';
+import { loadGates, isSourcePath } from './gates.mjs';
 
 /** git 의 빈 트리. 커밋이 하나도 없는 저장소의 기준점이다. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -56,8 +57,23 @@ export function parseFeatures(prdText) {
     });
 }
 
-/** 판정 대상인 경로. 문서는 판정 명령을 바꾸지 않는다 — 문서만 고친 턴은 막지 않는다. */
-export const isSource = (path) => !/\.md$/i.test(path);
+/**
+ * 판정 대상인 경로. 문서는 판정 명령을 바꾸지 않는다 — 문서만 고친 턴은 막지 않는다.
+ *
+ * 프로젝트가 구현 경로를 **선언했으면**(`harness-gates.json` 의 `source`) 커밋
+ * 게이트와 같은 정의를 쓴다. 두 게이트가 "소스" 를 다르게 세면 한쪽은 막고
+ * 한쪽은 지나간다.
+ *
+ * 선언이 없으면 넓게 본다 — 기본값 `src/` 로 좁히면 `src/` 가 없는 저장소에서
+ * 이 게이트가 **조용히 사라진다.** 대신 하네스·에디터 설정과 문서 디렉터리는
+ * 뺀다. 예전에는 `.md` 만 뺐고, 그래서 `.gitignore` 한 줄 고친 턴도 막혔다(거짓 차단).
+ */
+const NOT_SOURCE = /(\.md$|^\.claude\/|^\.cursor\/|^\.vscode\/|^\.idea\/|^docs\/|^decisions\/|^\.git(ignore|attributes)$|^\.editorconfig$|^LICENSE)/i;
+
+export function isSource(path, gates = null) {
+  if (gates?.declared?.source) return isSourcePath(path, gates) && !/\.md$/i.test(path);
+  return !NOT_SOURCE.test(path);
+}
 
 /** 하네스 상태 디렉터리. `--git-path` 는 워크트리마다 다른 git-dir 을 준다. */
 export function stateDir(root) {
@@ -202,7 +218,9 @@ export function checkStop({ root, sessionId, stopActive }) {
 
   const d = gitPaths(root, ['diff-tree', '-r', '--name-only', base, cur.tree]);
   if (!d.ok) return cannot('바뀐 파일을 읽지 못했다', d.reason);
-  const changed = d.paths.filter(isSource);
+  const gates = loadGates(root);
+  if (gates.error) return cannot('게이트 선언 파일을 읽지 못했다', gates.error);
+  const changed = d.paths.filter((p) => isSource(p, gates));
   if (changed.length === 0) return skip('문서만 바뀌었다');
 
   if (readRuns(s.dir).some((r) => r.tree === cur.tree)) return pass('지금 트리에 대해 판정이 돌았다');

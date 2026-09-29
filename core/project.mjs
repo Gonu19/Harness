@@ -17,6 +17,8 @@ import { dirname, join, relative, sep } from 'node:path';
 /** 이 표식이 있는 디렉터리를 그 생태계의 뿌리로 본다. */
 const MARKERS = {
   gradle: ['gradlew.bat', 'gradlew', 'settings.gradle', 'settings.gradle.kts'],
+  // 멀티 모듈에서 파일이 속한 **모듈**. 뿌리(래퍼)와 다를 수 있다.
+  gradleModule: ['build.gradle', 'build.gradle.kts'],
   node: ['package.json'],
   // 모노레포에서는 패키지마다 tsconfig 가 있다. **가장 가까운 것**이 그 파일을
   // 지배하므로 `package.json` 이 아니라 `tsconfig.json` 을 표식으로 쓴다 —
@@ -54,16 +56,21 @@ export function relPosix(root, file) {
 }
 
 /**
- * Java 소스가 main 인지 test 인지 가른다.
+ * Java 소스가 어느 소스 세트인지 가려 컴파일 태스크를 고른다. `rel` 은 **모듈** 기준이다.
  *
  * 이 구별이 필요한 이유: `compileJava` 는 `src/test` 를 컴파일하지 않는다.
  * 하나만 부르면 **에이전트가 가장 자주 고치는 테스트 파일이 검사에서 빠진다** —
  * 훅은 조용히 통과하고 나중에 `test` 태스크에서야 터진다.
+ *
+ * `main`·`test` 만 알던 때는 `src/integrationTest/java` 같은 추가 소스 세트가
+ * "소스 트리 밖" 으로 **조용히 빠졌다.** Gradle 규약대로 이름을 만든다 —
+ * `main` 은 `compileJava`, 나머지는 `compile<세트>Java`.
  */
 export function gradleCompileTask(rel) {
-  if (/^src\/test\//.test(rel)) return 'compileTestJava';
-  if (/^src\/main\//.test(rel)) return 'compileJava';
-  return null; // 소스 트리 밖이면 컴파일 대상이 아니다.
+  const m = /^src\/([A-Za-z][A-Za-z0-9]*)\/java\//.exec(rel);
+  if (!m) return null; // 소스 트리 밖이면 컴파일 대상이 아니다.
+  const set = m[1];
+  return set === 'main' ? 'compileJava' : `compile${set[0].toUpperCase()}${set.slice(1)}Java`;
 }
 
 /**

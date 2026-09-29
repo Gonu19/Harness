@@ -10,13 +10,14 @@
  * 그리고 이건 **에이전트의 도구 사용**에 관한 규칙이라 도구 계층이 제자리다.
  */
 import { readStdin, parseInput, notMine, emit, guard } from './hook-io.mjs';
-import { commandHeads } from './git-command.mjs';
+import { commandHeads, shellOf } from './git-command.mjs';
 import { checkScriptWrite } from '../../core/script-writes.mjs';
 
 await guard('guard-script-writes', async () => {
   const input = parseInput(await readStdin(), 'guard-script-writes');
-  if ((input?.tool_name ?? '') !== 'Bash') notMine();
+  const shell = shellOf(input?.tool_name ?? '');
+  if (!shell) notMine();
 
   const command = input?.tool_input?.command ?? '';
-  emit(checkScriptWrite({ heads: commandHeads(command), command }));
+  emit(checkScriptWrite({ heads: commandHeads(command, shell), command }));
 });

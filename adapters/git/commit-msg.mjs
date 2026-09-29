@@ -21,6 +21,7 @@
 import { readFileSync } from 'node:fs';
 import { emitGit, guardGit } from './emit.mjs';
 import { checkCommit } from '../../core/commit.mjs';
+import { loadGates } from '../../core/gates.mjs';
 import { gitPaths, topLevel } from '../../core/git.mjs';
 
 await guardGit('commit-msg', async () => {
@@ -54,5 +55,10 @@ await guardGit('commit-msg', async () => {
     emitGit({ verdict: 'cannot', what: '스테이징 목록을 읽지 못했다', detail: staged.reason }, 'commit-msg');
   }
 
-  emitGit(checkCommit({ root, message: body, changed: staged.paths }), 'commit-msg');
+  const gates = loadGates(root);
+  if (gates.error) {
+    emitGit({ verdict: 'cannot', what: '게이트 선언 파일을 읽지 못했다', detail: gates.error }, 'commit-msg');
+  }
+
+  emitGit(checkCommit({ root, message: body, changed: staged.paths, paths: gates.paths }), 'commit-msg');
 });

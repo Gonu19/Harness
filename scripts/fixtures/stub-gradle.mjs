@@ -21,15 +21,16 @@ import { readdirSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));  // 스텁은 <root>/gradle/ 아래에 놓인다
-const task = process.argv.slice(2).find((a) => !a.startsWith('--')) ?? '';
+// 스텁은 <root>/gradle/ 아래에 놓인다. `-p <모듈>` 이 오면 그 모듈이 뿌리다(멀티 모듈).
+const args = process.argv.slice(2);
+const p = args.indexOf('-p');
+const root = p >= 0 ? args[p + 1] : dirname(dirname(fileURLToPath(import.meta.url)));
+const task = args.filter((a, i) => !(p >= 0 && (i === p || i === p + 1))).find((a) => !a.startsWith('-')) ?? '';
 
-const SETS = {
-  compileJava: 'src/main/java',
-  compileTestJava: 'src/test/java',
-};
-
-const dir = SETS[task];
+// `compile<세트>Java` → `src/<세트>/java`. 실제 Gradle 의 소스 세트 규약과 같다.
+const m = /^compile(\w*)Java$/.exec(task);
+const set = m ? (m[1] === '' ? 'main' : m[1][0].toLowerCase() + m[1].slice(1)) : null;
+const dir = set ? `src/${set}/java` : null;
 if (!dir) {
   process.stderr.write(`stub-gradle: 알 수 없는 태스크 "${task}"\n`);
   process.exit(1);

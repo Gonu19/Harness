@@ -50,6 +50,16 @@ export function isStop(v) {
  * `cannot` 이 `block` 보다 앞선다 — 검사가 못 돈 사실이 먼저 알려져야 한다.
  */
 export function worst(verdicts) {
+  const blocks = verdicts.filter((v) => v.verdict === 'block');
+  // 막는 이유가 여럿이면 **전부** 보여 준다. 하나만 보이면 그걸 고친 뒤 다른 이유로
+  // 또 막히고, 그건 같은 명령을 두 번 부르게 만든다.
+  if (!verdicts.some((v) => v.verdict === 'cannot') && blocks.length > 1) {
+    return block(blocks.map((b) => b.reason).join('\n\n──────────\n\n'));
+  }
+  return worstOne(verdicts);
+}
+
+function worstOne(verdicts) {
   return verdicts.find((v) => v.verdict === 'cannot')
       ?? verdicts.find((v) => v.verdict === 'block')
       ?? verdicts.find((v) => v.verdict === 'pass')

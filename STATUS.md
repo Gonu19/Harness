@@ -2,7 +2,7 @@
 > **읽을 때:** 세션 시작 직후
 > **크기:** 3KB 이하. 넘으면 `.claude/rules/` 나 `decisions/` 로 갈 때가 된 것이다
 
-# 지금 상태 (2026-09-27)
+# 지금 상태 (2026-09-29)
 
 ## 이번 반복
 
@@ -18,13 +18,16 @@ Claude Code 에서만·우회 불가, git 계층은 어디서나·`--no-verify` 
 
 | 게이트 | 도구 계층 | git 계층 |
 |---|---|---|
-| `guard-migrations` | Write/Edit/Bash | `pre-commit` |
-| `commit-checklist` | Bash 가로채기 | `commit-msg` |
+| `guard-migrations` | Write/Edit/Bash/PowerShell | `pre-commit` |
+| `commit-checklist` | Bash·PowerShell 가로채기(heredoc 메시지 읽음) | `commit-msg` |
 | `edit-check` | Java · TS `tsc` · Py `ast.parse`/mypy | 없다(느려서 값을 잃는다) |
 | `guard-script-writes` | python 파일 쓰기 차단(`D6`) | 없다(쓴 방법을 모른다) |
 | `stop-check` | 턴 끝 — 판정 기록 없으면 한 번 막음(`D11`) | 없다(턴을 모른다) |
+| 비밀값(`D18`) | `commit-checklist` 안에서 | `pre-commit` |
 
 `claudeMdExcludes` 는 **사용자 스코프에도 먹는다**(0a 분기 A). `session-log` 발화도 봤다.
+실제 세션에서 Bash·PowerShell 가로채기 발화를 봤다(2026-09-29).
+구현·테스트·마이그레이션 경로는 `harness-gates.json` 선언, 기본 `src/`(`D17`).
 
 ## 이식 — 스크립트가 놓고 스킬이 채운다 (`D4`)
 
@@ -46,8 +49,8 @@ Claude Code 에서만·우회 불가, git 계층은 어디서나·`--no-verify` 
 
 ## 막힌 것 · 미확인
 
-- **실제 Gradle·tsc 미검증.** 스텁으로 태스크 분기와 종료 코드까지는 봤다.
-  Gradle 데몬과 tsc 의 실제 판정은 못 봤다 — `verify` 가 매번 찍는다
+- **실제 Gradle 미검증.** 스텁으로 태스크 분기와 종료 코드까지. 실제 tsc 는
+  `HARNESS_REAL_TSC` 를 주면 `verify` 가 돌린다 — 없으면 건너뜀을 찍는다
 - **`/harness-init` 은 아직 안 돌았다.** 스킬은 회귀로 검증할 수 없다 —
   첫 실제 온보딩이 판정이다
 - **`stop-check` 는 실제 Claude Code 에서 발화를 못 봤다.** 등록은 됐다

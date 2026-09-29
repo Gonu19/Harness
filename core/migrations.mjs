@@ -24,9 +24,14 @@
 import { skip, block, cannot } from './verdict.mjs';
 import { git, gitNameStatus } from './git.mjs';
 import { findRoot, relPosix } from './project.mjs';
+import { migrationPattern, DEFAULT_MIGRATIONS } from './gates.mjs';
 
-/** 마이그레이션 파일로 보는 경로. Flyway 의 표준 배치를 따른다. */
-export const MIGRATION = /db[\\/]migration[\\/].*\.sql$/i;
+/**
+ * 마이그레이션 파일로 보는 경로. 기본은 Flyway 의 표준 배치(`db/migration/`)고,
+ * 프로젝트가 `harness-gates.json` 의 `migrations` 로 바꿀 수 있다.
+ * 각 판정 함수는 어댑터가 읽은 패턴을 받는다 — 없으면 이 기본값이다.
+ */
+export const MIGRATION = migrationPattern(DEFAULT_MIGRATIONS);
 
 /**
  * 셸 명령이 파일을 바꾸려 한다고 볼 만한 표지.
@@ -34,13 +39,13 @@ export const MIGRATION = /db[\\/]migration[\\/].*\.sql$/i;
  * `Write|Edit` 만 걸면 `sed -i` · `git apply` · `python` 으로 고치는 경로가
  * 통째로 빠진다. 에이전트가 실제로 쓰는 수단이다.
  */
-const MUTATING = /\b(sed|perl|awk|tee|mv|rm|cp|truncate|dd)\b|>{1,2}\s|\bgit\s+(apply|mv|rm|checkout|restore|revert)\b|\bpython3?\b|\bSet-Content\b|\bAdd-Content\b|\bOut-File\b|\bMove-Item\b|\bRemove-Item\b/i;
+const MUTATING = /\b(sed|perl|awk|tee|mv|rm|cp|truncate|dd)\b|>{1,2}\s|\bgit\s+(apply|mv|rm|checkout|restore|revert)\b|\bpython3?\b|\b(Set|Add|Clear)-Content\b|\bOut-File\b|\b(Move|Remove|Copy|Rename|New)-Item\b/i;
 
 /**
  * 편집 대상 파일 하나를 판정한다. (도구 계층 — 편집이 일어나기 전)
  */
-export function checkEditedFile(file) {
-  if (!file || !MIGRATION.test(file)) return skip('마이그레이션 파일이 아니다');
+export function checkEditedFile(file, pattern = MIGRATION) {
+  if (!file || !pattern.test(file)) return skip('마이그레이션 파일이 아니다');
 
   // 여기부터는 마이그레이션이다. 판정 실패는 전부 멈춤이다.
   const root = findRoot(file, 'git');
@@ -68,8 +73,8 @@ export function checkEditedFile(file) {
  * 어느 파일을 어떻게 바꾸는지까지는 판정하지 못한다. 그래서 **판정할 수
  * 없으면 통과가 아니라 차단**이다.
  */
-export function checkShellCommand(command) {
-  if (!command || !/db[\\/]migration/i.test(command)) return skip('마이그레이션을 언급하지 않는다');
+export function checkShellCommand(command, pattern = MIGRATION) {
+  if (!command || !pattern.mention.test(command)) return skip('마이그레이션을 언급하지 않는다');
   if (!MUTATING.test(command)) return skip('읽기만 하는 명령이다');
 
   return block(
@@ -90,14 +95,14 @@ export function checkShellCommand(command) {
  * 새 마이그레이션이라 통과한다. 도구 계층과 같은 기준이다 —
  * HEAD 에 있던 것을 건드렸는가.
  */
-export function checkStagedIndex(root) {
+export function checkStagedIndex(root, pattern = MIGRATION) {
   // `-z` 로 받는다. 기본 출력은 비ASCII 경로를 따옴표로 감싸 이스케이프해서,
   // 한글이 섞인 마이그레이션 경로면 이 게이트가 통째로 빗나간다.
   const r = gitNameStatus(root, ['diff', '--cached', '--name-status', '--diff-filter=MDR']);
   if (!r.ok) return cannot('스테이징 목록을 읽지 못했다', r.reason);
 
   const hits = r.entries
-    .filter(({ path }) => path && MIGRATION.test(path))
+    .filter(({ path }) => path && pattern.test(path))
     .map(({ status, path }) => `${status}\t${path}`);
 
   if (hits.length === 0) return skip('수정된 마이그레이션이 없다');

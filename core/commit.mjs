@@ -22,6 +22,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { skip, block, cannot } from './verdict.mjs';
 import { indexSize } from './git.mjs';
+import { isSourcePath, isTestPath, DEFAULT_SOURCE, DEFAULT_TEST } from './gates.mjs';
 
 /** 커밋 메시지에 있어야 하는 열쇠말. */
 export const KEYS = [
@@ -107,8 +108,10 @@ export function loadedBytes(path, buffer) {
  * @param {string|null} arg.message  커밋 메시지. **null 은 "알 수 없다"** — 판정 불가다
  * @param {string[]} arg.changed 이 커밋에 들어갈 파일 (뿌리 기준 상대 · posix)
  * @param {{key:string,question:string}[]} [arg.extraKeys] 프로젝트 고유 불변조건
+ * @param {{source:string[], test:string[]}} [arg.paths] 구현·테스트 경로 (`core/gates.mjs`)
  */
-export function checkCommit({ root, message, changed, extraKeys = [] }) {
+export function checkCommit({ root, message, changed, extraKeys = [],
+                              paths = { source: DEFAULT_SOURCE, test: DEFAULT_TEST } }) {
   // 문서 예산은 **소스 변경 여부와 무관하게** 본다.
   //
   // 실측으로 걸린 결함이다. 원래는 `touchesSource` 가 거짓이면 곧장 skip 했는데,
@@ -123,7 +126,9 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
 
   const alwaysOn = [...(budget.verdict === 'block' ? budget.items : []), ...ledger];
 
-  const touchesSource = changed.some((f) => /^src\//.test(f));
+  // 구현 경로는 프로젝트가 선언한다(기본 `src/`). 하드코딩했을 때는 `app/`·`lib/`
+  // 저장소에서 아래 게이트가 전부 "문서만" 으로 조용히 빠졌다.
+  const touchesSource = changed.some((f) => isSourcePath(f, paths));
   if (!touchesSource) {
     return alwaysOn.length > 0
       ? block(render({ missing: [], facts: alwaysOn, notices: [], changed }))
@@ -132,7 +137,9 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
 
   if (message === null) {
     return cannot('커밋 메시지를 읽지 못했다',
-      '`-F` 나 편집기로 메시지를 주면 훅이 내용을 볼 수 없다. `-m` 으로 넘겨라.');
+      '파일(`-F <파일>`)·메시지 재사용(`-C`)·값을 알 수 없는 치환(`$(date)` 등)으로 주면\n' +
+      '훅이 내용을 볼 수 없다. `-m "…"`, `-m "$(cat <<\'EOF\' … EOF)"`, `-F - <<\'EOF\'`,\n' +
+      'PowerShell 이면 `-m @\'…\'@` 로 넘겨라.');
   }
 
   const required = [...KEYS, ...extraKeys];
@@ -143,8 +150,11 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
   const facts = [];      // 막는다
   const notices = [];    // 막지는 않고, 막을 때 같이 보여 준다
 
-  const touchesMain = changed.some((f) => /^src\/main\//.test(f));
-  const touchesTest = changed.some((f) => /^src\/test\//.test(f));
+  // 「구현」 = 구현 경로 중 테스트가 아닌 것. 예전에는 `src/main/`(Gradle 배치)만
+  // 봐서 TS·Python 저장소에서는 STATUS 동반과 테스트 알림이 뜨지 않았다.
+  // 테스트는 구현 경로 **밖**에 있을 수 있다(`tests/`) — 그래서 따로 센다.
+  const touchesMain = changed.some((f) => isSourcePath(f, paths) && !isTestPath(f, paths));
+  const touchesTest = changed.some((f) => isTestPath(f, paths));
   const statusPath = ['STATUS.md', 'docs/STATUS.md'].find((p) => existsSync(join(root, p)));
 
   // 막는다: 예외가 거의 없고, 고치는 비용이 한 줄이며, 이미 관측된 결함이다
@@ -163,7 +173,7 @@ export function checkCommit({ root, message, changed, extraKeys = [] }) {
   // 정상인 커밋이 많다. 여기서 막으면 거짓 차단이 일상이 된다.
   if (touchesMain && !touchesTest) {
     notices.push(
-      'src/main 이 바뀌는데 src/test 는 그대로다. 새 동작에 테스트가 없거나, ' +
+      '구현이 바뀌는데 테스트는 그대로다. 새 동작에 테스트가 없거나, ' +
       '기존 테스트가 그 변경을 안 보고 있을 수 있다.'
     );
   }

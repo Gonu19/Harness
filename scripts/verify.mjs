@@ -24,7 +24,7 @@
  * 사용법: node scripts/verify.mjs [--verbose]
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, copyFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, copyFileSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -103,17 +103,18 @@ function runScript(path, args = [], opts = {}) {
 }
 
 /** 훅 등록 상태를 통제한 가짜 홈. `null` 이면 훅이 하나도 없는 홈이다. */
-function fakeHome(register, { withStop = true } = {}) {
+function fakeHome(register, { withStop = true, powershell = false } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'harness-home-'));
   mkdirSync(join(home, '.claude'), { recursive: true });
   const H = join(REPO, 'adapters', 'claude-code').replace(/\\/g, '/');
+  const ps = powershell ? '|PowerShell' : '';
   const settings = register
     ? { hooks: {
         ...(withStop ? { Stop: [{ hooks: [{ type: 'command', command: `node "${H}/stop-check.mjs"` }] }] } : {}),
         PostToolUse: [{ matcher: 'Write|Edit', hooks: [{ type: 'command', command: `node "${H}/edit-check.mjs"` }] }],
         PreToolUse: [
-          { matcher: 'Write|Edit|Bash', hooks: [{ type: 'command', command: `node "${H}/guard-migrations.mjs"` }] },
-          { matcher: 'Bash', hooks: [
+          { matcher: `Write|Edit|Bash${ps}`, hooks: [{ type: 'command', command: `node "${H}/guard-migrations.mjs"` }] },
+          { matcher: `Bash${ps}`, hooks: [
             { type: 'command', command: `node "${H}/commit-checklist.mjs"` },
             { type: 'command', command: `node "${H}/guard-script-writes.mjs"` },
           ] },
@@ -371,6 +372,273 @@ function verifyCommit(fx) {
 }
 
 // ---------------------------------------------------------------------------
+// 검사 2a — 셸 도구 두 가지 (Bash · PowerShell) 를 **훅 단위로** 태운다
+//
+// Windows 에서 Claude Code 는 PowerShell 을 Bash 와 별개의 도구로 넘긴다.
+// 어댑터가 `tool_name === 'Bash'` 만 보던 때는 PowerShell 로 한 커밋·파일 쓰기·
+// 마이그레이션 수정이 전부 "소관 아님" 으로 **조용히** 지나갔다.
+// ---------------------------------------------------------------------------
+function verifyShells(fx) {
+  const S = 'shells';
+  const run = (hook, tool, command) => runHook(hook, { tool_name: tool, tool_input: { command }, cwd: fx.root }, fx.root);
+  const scriptHook = join(CC, 'guard-script-writes.mjs');
+
+  fx.w('src/main/java/A.java', 'class A { int shells; }\n');
+  git(fx.root, ['add', 'src/main/java/A.java']);
+
+  expect(S, 'PowerShell 커밋 · 열쇠말 없음 → 차단', 'block', 2,
+    run(HOOK.commit, 'PowerShell', 'git commit -m "그냥"'), '커밋 전 확인이 끝나지 않았다');
+
+  fx.w('STATUS.md', '# 상태\n\n셸\n');
+  git(fx.root, ['add', 'STATUS.md']);
+  expect(S, 'PowerShell here-string 커밋 · 열쇠말 + STATUS → 통과', 'pass', 0,
+    run(HOOK.commit, 'PowerShell', "git commit -m @'\n고침\n\n규모: 작다\n경로: 하나뿐\n'@"));
+
+  // **이게 예전에는 영원히 막혔다.** 본문(=메시지)을 지웠기 때문이다.
+  expect(S, 'Bash heredoc 커밋 · 열쇠말 + STATUS → 통과', 'pass', 0,
+    run(HOOK.commit, 'Bash', "git commit -m \"$(cat <<'EOF'\n고침\n\n규모: 작다\n경로: 하나뿐\nEOF\n)\""));
+  expect(S, 'Bash heredoc 커밋 · 열쇠말 하나 빠짐 → 그 항목을 지목', 'block', 2,
+    run(HOOK.commit, 'Bash', "git commit -m \"$(cat <<'EOF'\n고침\n\n규모: 작다\nEOF\n)\""), '경로:');
+  expect(S, '값을 모르는 치환 → 판정 불가(통과 아님)', 'block', 2,
+    run(HOOK.commit, 'Bash', 'git commit -m "$(git log -1 --format=%B)"'), '검사를 돌리지 못했다');
+
+  git(fx.root, ['reset', '-q']);
+  git(fx.root, ['checkout', '-q', '--', '.']);
+
+  expect(S, 'PowerShell 로 python 파일 쓰기 → 차단', 'block', 2,
+    run(scriptHook, 'PowerShell', `& python -c "open('o.txt','w').write('x')"`), 'Write/Edit');
+  expect(S, 'PowerShell 로 python 읽기 → 통과', 'pass', 0,
+    run(scriptHook, 'PowerShell', `python -c "print(open('a').read())"`));
+
+  expect(S, 'PowerShell Set-Content 로 마이그레이션 수정 → 차단', 'block', 2,
+    run(HOOK.migrations, 'PowerShell', "Set-Content src\\main\\resources\\db\\migration\\V1__init.sql 'x'"), '셸로 고치려 한다');
+  expect(S, 'PowerShell Get-Content 로 읽기 → 통과', 'pass', 0,
+    run(HOOK.migrations, 'PowerShell', 'Get-Content src\\main\\resources\\db\\migration\\V1__init.sql'));
+
+  expect(S, '셸이 아닌 도구 → 소관 아님', 'pass', 0,
+    runHook(HOOK.commit, { tool_name: 'Read', tool_input: { command: 'git commit -m x' }, cwd: fx.root }, fx.root));
+
+  // --- 커밋이 일어나는 저장소 ---------------------------------------------
+  //
+  // 실제 세션에서 걸렸다. 게이트가 **세션 cwd** 의 저장소를 판정해서, 세션이 깨끗한
+  // 저장소 A 에 있고 명령이 `cd B && git commit` 이면 A 를 보고 **통과**시켰다.
+  const other = mkdtempSync(join(tmpdir(), 'harness-other-'));
+  try {
+    spawnSync('git', ['init', '-q', other], { encoding: 'utf8', windowsHide: true });
+    for (const [k, v] of [['user.email', 'o@h.local'], ['user.name', 'o']]) git(other, ['config', k, v]);
+    mkdirSync(join(other, 'src'), { recursive: true });
+    writeFileSync(join(other, 'src', 'x.js'), 'x\n');
+    git(other, ['add', '-A']);
+    const fromA = (command, tool = 'Bash') =>
+      runHook(HOOK.commit, { tool_name: tool, tool_input: { command }, cwd: fx.root }, fx.root);
+    const B = other.replace(/\\/g, '/');
+
+    expect(S, 'cd B && git commit — B 를 판정한다(열쇠말 없음 → 차단)', 'block', 2,
+      fromA(`cd "${B}" && git commit -m "그냥"`), '커밋 전 확인이 끝나지 않았다');
+    expect(S, 'git -C B commit — B 를 판정한다', 'block', 2,
+      fromA(`git -C "${B}" commit -m "그냥"`), '커밋 전 확인이 끝나지 않았다');
+    expect(S, 'PS: Set-Location B; git commit — B 를 판정한다', 'block', 2,
+      fromA(`Set-Location '${B}'; git commit -m "그냥"`, 'PowerShell'), '커밋 전 확인이 끝나지 않았다');
+    if (process.platform === 'win32') {
+      const gitBash = B.replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`);
+      expect(S, 'Git Bash 경로 /c/… 도 푼다', 'block', 2,
+        fromA(`cd "${gitBash}" && git commit -m "그냥"`), '커밋 전 확인이 끝나지 않았다');
+    }
+    expect(S, 'cd "$VAR" — 값을 모르는 경로 → 판정 불가', 'block', 2,
+      fromA('cd "$REPO" && git commit -m "그냥"'), '커밋할 저장소를 알 수 없다');
+
+    // 짝 — 옮겨 가지 않으면 세션 cwd(깨끗한 A)를 본다. 소스 변경이 없어 통과.
+    expect(S, '옮겨 가지 않으면 세션 저장소를 본다 → 통과', 'pass', 0, fromA('git commit -m "그냥"'));
+
+    // --- 같은 명령 안의 `git add` ------------------------------------------
+    //
+    // PreToolUse 는 명령이 돌기 **전에** 불린다. `git add -A && git commit` 이면 훅이
+    // 보는 인덱스는 비어 있어 "소스 변경 없음" 으로 통과했다 — 실제 세션에서 걸렸다.
+    fx.w('src/main/java/New.java', 'class New {}\n');   // 추적 안 된 새 소스
+    fx.w('NOTES.md', '메모\n');
+    expect(S, 'git add -A && git commit — 새 소스를 미리 본다 → 차단', 'block', 2,
+      fromA('git add -A && git commit -m "그냥"'), 'src/main/java/New.java');
+    expect(S, 'git add src/… && git commit — 그 경로를 본다 → 차단', 'block', 2,
+      fromA('git add src/main/java/New.java && git commit -m "그냥"'), '커밋 전 확인이 끝나지 않았다');
+    expect(S, 'PS: git add .; git commit → 차단', 'block', 2,
+      fromA('git add .; git commit -m "그냥"', 'PowerShell'), '커밋 전 확인이 끝나지 않았다');
+    // 짝 — 문서만 add 하면 옆에 놓인 소스를 끌어오지 않는다(거짓 차단 없음).
+    expect(S, 'git add NOTES.md && git commit — 옆의 소스는 안 끌어온다 → 통과', 'pass', 0,
+      fromA('git add NOTES.md && git commit -m "메모"'));
+    rmSync(join(fx.root, 'src/main/java/New.java'), { force: true });
+    rmSync(join(fx.root, 'NOTES.md'), { force: true });
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 검사 2c — 비밀값 (D18)
+//
+// 샘플 프로젝트에서 AWS 키가 든 파일이 두 계층을 다 통과했다. 가짜 키는 **실행 중에
+// 이어 붙여** 만든다 — 이 파일에 통째로 적으면 이 저장소의 커밋이 자기 게이트에 막힌다.
+// ---------------------------------------------------------------------------
+async function verifySecrets() {
+  const X = 'secrets';
+  const { scanLines, addedLines, envFiles, ALLOW_MARK } = await import(pathToFileURL(join(REPO, 'core', 'secrets.mjs')).href);
+  const AWS = 'AKIA' + 'Z7Q2M4X9L1B8C3D5';
+  const GH = 'ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8';
+  const PEM = '-----BEGIN ' + 'RSA PRIVATE KEY-----';
+  const one = (text) => scanLines([{ path: 'f', line: 1, text }]);
+
+  record(X, 'AWS 액세스 키 → 잡는다', 'block', one(`key=${AWS}`).length === 1, '');
+  record(X, 'GitHub 토큰 → 잡는다', 'block', one(`token: ${GH}`).length === 1, '');
+  record(X, '개인 키 블록 → 잡는다', 'block', one(PEM).length === 1, '');
+  record(X, '공개된 예시 값(…EXAMPLE) → 통과', 'pass', one('AKIA' + 'IOSFODNN7EXAMPLE').length === 0, '');
+  record(X, `같은 줄의 ${ALLOW_MARK} → 통과`, 'pass', one(`${AWS}  # ${ALLOW_MARK} 문서 예시`).length === 0, '');
+  record(X, '해시·UUID 는 안 잡는다 (엔트로피 추정 안 함)', 'pass',
+    one('sha=3f786850e387550fdab836ed7e6dc881de23001b id=550e8400-e29b-41d4-a716-446655440000').length === 0, '');
+  record(X, '메시지에 값을 통째로 찍지 않는다', 'pass', !one(`k=${AWS}`)[0]?.shown.includes(AWS), '');
+  record(X, '.env 는 잡고 .env.example 은 통과', 'block',
+    JSON.stringify(envFiles(['.env', 'app/.env.local', '.env.example', 'x.env'])) === '[".env","app/.env.local"]', '');
+  const diff = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -3,0 +4,2 @@\n+one\n+two\n@@ -9 +11 @@\n-old\n+new\n';
+  record(X, 'diff 에서 추가 줄과 새 줄 번호를 읽는다', 'pass',
+    JSON.stringify(addedLines(diff).map((l) => [l.line, l.text])) === '[[4,"one"],[5,"two"],[11,"new"]]',
+    JSON.stringify(addedLines(diff)));
+
+  // --- 두 계층에서 실제로 ------------------------------------------------
+  const root = mkdtempSync(join(tmpdir(), 'harness-secrets-'));
+  const w = (rel, body) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); };
+  const preCommit = () => runScript(join(REPO, 'adapters', 'git', 'pre-commit.mjs'), [], { cwd: root });
+  const tool = (command) => runHook(HOOK.commit, { tool_name: 'Bash', tool_input: { command }, cwd: root }, root);
+  try {
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    for (const [k, v] of [['user.email', 's@h.local'], ['user.name', 's']]) git(root, ['config', k, v]);
+    w('README.md', '# x\n');
+    git(root, ['add', '-A']); git(root, ['commit', '-q', '-m', 'init']);
+
+    w('docs/deploy.md', `# 배포\n\nAWS_ACCESS_KEY_ID=${AWS}\n`);
+    git(root, ['add', '-A']);
+    expect(X, 'git 계층: 키가 든 문서 커밋 → 차단', 'block', 1, preCommit(), 'AWS 액세스 키');
+    const shown = preCommit();
+    record(X, 'git 계층: 차단 메시지에 키 원문이 없다', 'pass', !(shown.out + shown.err).includes(AWS), '');
+
+    w('docs/deploy.md', '# 배포\n\nAWS_ACCESS_KEY_ID=(환경변수에서 읽는다)\n');
+    git(root, ['add', '-A']);
+    expect(X, 'git 계층: 키를 빼면 → 통과', 'pass', 0, preCommit());
+    git(root, ['commit', '-q', '--no-verify', '-m', 'doc']);
+
+    // 도구 계층 — `--no-verify` 로 못 뚫고, 같은 명령의 `git add` 도 미리 본다.
+    w('config/.env', `GITHUB_TOKEN=${GH}\n`);
+    expect(X, '도구 계층: git add -A && git commit --no-verify — 새 .env·토큰 → 차단', 'block', 2,
+      tool('git add -A && git commit --no-verify -m "설정"'), '.env 파일 자체가');
+    rmSync(join(root, 'config'), { recursive: true, force: true });
+    w('docs/deploy.md', `# 배포\n\n예시: ${AWS}  <!-- ${ALLOW_MARK}: 문서 예시 -->\n`);
+    expect(X, `도구 계층: ${ALLOW_MARK} 표식 → 통과`, 'pass', 0,
+      tool('git add -A && git commit -m "예시"'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 검사 2b — 경로 선언 (`harness-gates.json`)
+//
+// 커밋 게이트는 `^src/` · `src/main` · `src/test` 를 하드코딩했다. `app/` 저장소는
+// 구현 커밋이 "문서만" 으로 빠졌고, TS·Python 저장소는 STATUS 동반이 안 떴다.
+// ---------------------------------------------------------------------------
+function verifyPaths() {
+  const P = 'paths';
+  const root = mkdtempSync(join(tmpdir(), 'harness-paths-'));
+  const w = (rel, body) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); return p; };
+  const commit = (msg) => runHook(HOOK.commit, { tool_name: 'Bash', tool_input: { command: `git commit -m "${msg}"` }, cwd: root }, root);
+  const KEYS = '고침\n\n규모: 작다\n경로: 하나뿐';
+  const decl = (obj) => w('.claude/harness-gates.json', JSON.stringify(obj));
+  const reset = () => { git(root, ['reset', '-q']); git(root, ['checkout', '-q', '--', '.']); };
+
+  try {
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    for (const [k, v] of [['user.email', 'p@h.local'], ['user.name', 'p'], ['commit.gpgsign', 'false']]) git(root, ['config', k, v]);
+    w('STATUS.md', '# 상태\n');
+    w('app/main.ts', 'export const a = 1;\n');
+    w('src/lib.ts', 'export const b = 1;\n');
+    w('migrations/V1__init.sql', '-- init\n');
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '-m', 'init']);
+
+    // 기본값(`src/`) — TS 라도 구현이 바뀌면 STATUS 동반을 본다. 예전엔 `src/main/` 만 봤다.
+    w('src/lib.ts', 'export const b = 2;\n');
+    git(root, ['add', 'src/lib.ts']);
+    expect(P, 'src/*.ts (Gradle 배치 아님) + STATUS 없음 → 차단', 'block', 2, commit(KEYS), 'STATUS.md');
+    w('STATUS.md', '# 상태\n\n바뀜\n');
+    git(root, ['add', 'STATUS.md']);
+    expect(P, 'src/*.ts + STATUS 동반 → 통과', 'pass', 0, commit(KEYS));
+    reset();
+
+    // 선언이 없으면 `app/` 은 구현이 아니다 — 기본값 그대로다(추측하지 않는다).
+    w('app/main.ts', 'export const a = 2;\n');
+    git(root, ['add', 'app/main.ts']);
+    expect(P, '선언 없음 · app/ 변경 → 구현으로 안 본다 (기본값)', 'pass', 0, commit('그냥'));
+
+    // 선언하면 켜진다.
+    decl({ source: ['app/'] });
+    expect(P, 'source: ["app/"] 선언 · app/ 변경 · 열쇠말 없음 → 차단', 'block', 2, commit('그냥'), '규모:');
+    w('STATUS.md', '# 상태\n\napp\n');
+    git(root, ['add', 'STATUS.md']);
+    expect(P, 'source 선언 · 열쇠말 + STATUS → 통과', 'pass', 0, commit(KEYS));
+
+    reset();
+
+    // 테스트 알림은 막힐 때 같이 보인다. 테스트는 구현 경로 **밖**(`tests/`)에 있어도 센다.
+    w('app/main.ts', 'export const a = 4;\n');
+    git(root, ['add', 'app/main.ts']);
+    expect(P, '구현만 바뀌면 테스트 알림이 붙는다', 'block', 2, commit(KEYS), '테스트는 그대로다');
+    w('tests/main.test.ts', 'test("a", () => {});\n');
+    git(root, ['add', 'tests/main.test.ts']);
+    const withTest = commit(KEYS);
+    record(P, 'tests/ 가 같이 바뀌면 테스트 알림이 없다', 'pass',
+      withTest.code === 2 && !withTest.out.includes('테스트는 그대로다'), `exit=${withTest.code}\n${withTest.out.slice(0, 300)}`);
+    reset();
+    rmSync(join(root, 'tests'), { recursive: true, force: true });
+
+    // 선언 파일이 깨졌으면 기본값으로 조용히 넘어가지 않는다.
+    w('.claude/harness-gates.json', '{ 깨짐');
+    w('app/main.ts', 'export const a = 3;\n');
+    git(root, ['add', 'app/main.ts']);
+    expect(P, '선언 파일이 깨지면 → 판정 불가(통과 아님)', 'block', 2, commit(KEYS), '선언 파일');
+    decl({ source: 'app/' });
+    expect(P, 'source 가 배열이 아니면 → 판정 불가', 'block', 2, commit(KEYS), '배열');
+    rmSync(join(root, '.claude'), { recursive: true, force: true });
+    reset();
+
+    // 마이그레이션 경로 선언. 기본값(`db/migration/`)이 아닌 저장소.
+    const mig = (file) => runHook(HOOK.migrations, { tool_name: 'Edit', tool_input: { file_path: join(root, file) }, cwd: root }, root);
+    expect(P, '선언 없음 · migrations/V1 → 마이그레이션으로 안 본다', 'pass', 0, mig('migrations/V1__init.sql'));
+    decl({ migrations: ['migrations/'] });
+    expect(P, 'migrations 선언 · 커밋된 V1 Edit → 차단', 'block', 2, mig('migrations/V1__init.sql'), '이미 커밋된');
+    w('migrations/V2__new.sql', '-- new\n');
+    expect(P, 'migrations 선언 · 새 V2 Edit → 통과', 'pass', 0, mig('migrations/V2__new.sql'));
+
+    // gates-report 가 기본값이 맞지 않는 저장소를 **말한다.**
+    rmSync(join(root, 'src'), { recursive: true, force: true });
+    rmSync(join(root, '.claude'), { recursive: true, force: true });
+    const home = fakeHome(true);
+    const rep = runScript(join(REPO, 'scripts', 'gates-report.mjs'), [root], { env: home.env });
+    record(P, 'src/ 가 없고 선언도 없으면 gates-report 가 말한다', 'block',
+      rep.out.includes('구현 경로 기본값'), rep.out.slice(-500));
+    decl({ source: ['app/'] });
+    const rep2 = runScript(join(REPO, 'scripts', 'gates-report.mjs'), [root], { env: home.env });
+    record(P, 'source 를 선언하면 그 말이 사라진다', 'pass',
+      !rep2.out.includes('구현 경로'), rep2.out.slice(-500));
+    record(P, 'matcher 가 Bash 뿐이면 PowerShell 을 안 본다고 말한다', 'block',
+      rep2.out.includes('PowerShell 도구를 안 본다'), rep2.out.slice(-500));
+    rmSync(home.home, { recursive: true, force: true });
+    const psHome = fakeHome(true, { powershell: true });
+    const rep3 = runScript(join(REPO, 'scripts', 'gates-report.mjs'), [root], { env: psHome.env });
+    record(P, 'matcher 에 PowerShell 이 있으면 그 말이 없다', 'pass',
+      !rep3.out.includes('PowerShell 도구를 안 본다'), rep3.out.slice(-500));
+    rmSync(psHome.home, { recursive: true, force: true });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 검사 3 — 명령 파싱 (순수 함수. git 도 파일도 필요 없다)
 // ---------------------------------------------------------------------------
 async function verifyGitCommand() {
@@ -382,7 +650,9 @@ async function verifyGitCommand() {
     record(G, '모듈 로드', 'pass', false, String(error));
     return;
   }
-  const { findCommitInvocation, commitMessage, stagesWorkingTree } = lib;
+  const { findCommitInvocation, commitMessage, stagesWorkingTree, commandHeads } = lib;
+  const msgOf = (inv) => (inv === null ? undefined : commitMessage(inv.rest, inv.stdin));
+  const wtOf = (inv) => inv !== null && stagesWorkingTree(inv.tokens, inv.rest);
 
   const found = [
     ['git commit -m "x"', true],
@@ -409,20 +679,83 @@ async function verifyGitCommand() {
   // 여러 줄 메시지가 통째로 살아야 한다. 정규식 split 으로 하면 여기서 깨진다.
   const multi = findCommitInvocation('git commit -m "제목\n\n본문 규모: 크다"');
   record(G, '여러 줄 -m 메시지가 보존된다', 'pass',
-    multi !== null && commitMessage(multi.tokens).includes('규모: 크다'),
-    `추출=${multi && JSON.stringify(commitMessage(multi.tokens))}`);
+    multi !== null && msgOf(multi).includes('규모: 크다'),
+    `추출=${JSON.stringify(msgOf(multi))}`);
 
   const byFile = findCommitInvocation('git commit -F msg.txt');
-  record(G, '-F 는 메시지를 알 수 없다(null)', 'block',
-    byFile !== null && commitMessage(byFile.tokens) === null, '');
+  record(G, '-F 는 메시지를 알 수 없다(null)', 'block', byFile !== null && msgOf(byFile) === null, '');
 
   const all = findCommitInvocation('git commit -am "x"');
-  record(G, '-am 은 워킹트리를 스테이징한다', 'pass',
-    all !== null && stagesWorkingTree(all.tokens, all.rest) === true, '');
+  record(G, '-am 은 워킹트리를 스테이징한다', 'pass', wtOf(all) === true, '');
 
   const plain = findCommitInvocation('git commit -m "x"');
-  record(G, '-m 만이면 인덱스만 본다', 'pass',
-    plain !== null && stagesWorkingTree(plain.tokens, plain.rest) === false, '');
+  record(G, '-m 만이면 인덱스만 본다', 'pass', plain !== null && wtOf(plain) === false, '');
+
+  // --- heredoc — Claude Code 의 기본 커밋 형태 ---------------------------
+  //
+  // 예전 파서는 heredoc 본문을 "데이터" 로 **지웠다.** 그런데 이 형태에서는
+  // 본문이 곧 메시지라, 메시지가 `$(cat <<'EOF'\n)` 이 되어 열쇠말을 넣어도
+  // 영원히 막혔다. 실측으로 확인한 결함이다.
+  const subst = findCommitInvocation("git commit -m \"$(cat <<'EOF'\n제목\n\n규모: 크다\n경로: 하나\nEOF\n)\"");
+  record(G, '-m "$(cat <<\'EOF\' … EOF)" → 본문이 메시지다', 'pass',
+    msgOf(subst) === '제목\n\n규모: 크다\n경로: 하나', `추출=${JSON.stringify(msgOf(subst))}`);
+
+  const stdinDoc = findCommitInvocation("git commit -F - <<'EOF'\n제목\n규모: 크다\nEOF");
+  record(G, '-F - <<\'EOF\' → heredoc 이 메시지다', 'pass',
+    msgOf(stdinDoc)?.includes('규모: 크다') === true && wtOf(stdinDoc) === false,
+    `추출=${JSON.stringify(msgOf(stdinDoc))} 워킹트리=${wtOf(stdinDoc)}`);
+
+  const dashTab = findCommitInvocation("git commit -F- <<-EOF\n\t규모: 탭\n\tEOF");
+  record(G, '<<- 는 앞 탭을 뗀다 · -F- 붙은 형태', 'pass',
+    msgOf(dashTab) === '규모: 탭\n', `추출=${JSON.stringify(msgOf(dashTab))}`);
+
+  // 값을 모르는 치환은 추측하지 않는다 — 판정 불가(null)다.
+  const dated = findCommitInvocation('git commit -m "릴리스 $(date +%F)"');
+  record(G, '값을 모르는 $( ) → 메시지를 모른다(null)', 'block', msgOf(dated) === null,
+    `추출=${JSON.stringify(msgOf(dated))}`);
+  const backtick = findCommitInvocation('git commit -m "`cat msg`"');
+  record(G, '백틱 치환 → 메시지를 모른다(null)', 'block', msgOf(backtick) === null, '');
+
+  // --- 옵션 값을 경로로 오인하지 않는다 -----------------------------------
+  record(G, '-S -m x → 경로 없음 (-S 는 값을 안 먹는다)', 'pass',
+    wtOf(findCommitInvocation('git commit -S -m "x"')) === false, '');
+  record(G, '2>&1 · > log 는 리다이렉션이다 → 경로 없음', 'pass',
+    wtOf(findCommitInvocation('git commit -m "x" 2>&1 > log.txt')) === false, '');
+  record(G, '진짜 경로 인자는 여전히 잡는다', 'block',
+    wtOf(findCommitInvocation('git commit -m "x" src/A.java')) === true, '');
+  record(G, 'git -C 경로 commit -m → 전역 -C 를 메시지 재사용으로 오인하지 않는다', 'pass',
+    msgOf(findCommitInvocation('git -C repo commit -m "규모: a"')) === '규모: a', '');
+  record(G, 'commit -C HEAD → 메시지를 모른다(null)', 'block',
+    msgOf(findCommitInvocation('git commit -C HEAD')) === null, '');
+
+  // --- PowerShell -------------------------------------------------------
+  //
+  // Windows 에서 Claude Code 는 PowerShell 을 별개의 도구로 넘긴다. 문법이 다르다 —
+  // 이스케이프는 백틱, 여러 줄 문자열은 here-string, 앞의 `&` 는 호출 연산자.
+  const ps = (cmd) => findCommitInvocation(cmd, 'powershell');
+  record(G, 'PS: here-string 메시지 @\'…\'@', 'pass',
+    msgOf(ps("git commit -m @'\n제목\n\n규모: 크다\n경로: 하나\n'@")) === '제목\n\n규모: 크다\n경로: 하나',
+    `추출=${JSON.stringify(msgOf(ps("git commit -m @'\n제목\n'@")))}`);
+  record(G, 'PS: 작은따옴표 안의 \'\' 는 따옴표 하나', 'pass',
+    msgOf(ps("git commit -m 'it''s 규모: a'")) === "it's 규모: a", '');
+  record(G, 'PS: 백틱 이스케이프 `n 은 줄바꿈', 'pass',
+    msgOf(ps('git commit -m "제목`n규모: a"')) === '제목\n규모: a', '');
+  record(G, 'PS: & "…\\git.exe" commit 도 커밋이다', 'block',
+    ps('& "C:\\Program Files\\Git\\cmd\\git.exe" commit -m "x"') !== null, '');
+  record(G, 'PS: cd x; git add -A; git commit 탐지', 'block',
+    ps('cd repo; git add -A; git commit -m "x"') !== null, '');
+  record(G, 'PS: $(…) 부분식 → 메시지를 모른다(null)', 'block',
+    msgOf(ps('git commit -m "v$(Get-Date)"')) === null, '');
+  record(G, 'PS: (Get-Content …) 괄호식 → 메시지를 모른다(null)', 'block',
+    msgOf(ps('git commit -m (Get-Content msg.txt -Raw)')) === null, '');
+  record(G, 'PS: 2>&1 은 경로가 아니다', 'pass', wtOf(ps('git commit -m "x" 2>&1')) === false, '');
+  record(G, 'PS: here-string 안의 git commit 글자는 명령이 아니다', 'pass',
+    ps("$m = @'\ngit commit -m fake\n'@") === null, '');
+
+  // 실행 파일 이름 — 스크립트 쓰기 게이트가 쓴다.
+  const heads = commandHeads('& "C:\\Py\\python.exe" -c "print(1)"; git status', 'powershell');
+  record(G, 'PS: 호출 연산자 뒤의 실행 파일을 본다', 'pass',
+    heads[0] === 'python' && heads[1] === 'git', `heads=${JSON.stringify(heads)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -556,8 +889,6 @@ function verifyEditRun() {
   // 스텁이 대신하지 못하는 것 — 숨기지 않는다.
   skipped.push({ group: K, name: '실제 Gradle 데몬·증분 빌드 동작',
     why: '스텁 래퍼는 javac 만 부른다. Gradle 고유 동작은 미검증' });
-  skipped.push({ group: K, name: '실제 tsc 의 타입 판정',
-    why: 'typescript 미설치. 스텁은 실행 경로와 종료 코드만 본다' });
 }
 
 function javaFixture() {
@@ -601,6 +932,24 @@ function runJavaCases(K) {
       edit('src/test/java/BadTest.java'), 'compileTestJava 실패');
     expect(K, 'java: 같은 오류에 src/main 편집은 통과 (태스크가 갈린다)', 'pass', 0,
       edit('src/main/java/Ok.java'));
+    rmSync(join(fx.root, 'src/test/java/BadTest.java'), { force: true });
+
+    // 추가 소스 세트. `main`·`test` 만 알던 때는 "소스 트리 밖" 으로 조용히 빠졌다.
+    fx.w('src/integrationTest/java/BadIT.java', 'public class BadIT { int x = "문자열"; }\n');
+    expect(K, 'java: src/integrationTest 오류 → compileIntegrationTestJava 로 차단', 'block', 2,
+      edit('src/integrationTest/java/BadIT.java'), 'compileIntegrationTestJava 실패');
+    fx.w('src/integrationTest/java/BadIT.java', 'public class BadIT { }\n');
+    expect(K, 'java: src/integrationTest 오류를 빼면 → 통과', 'pass', 0,
+      edit('src/integrationTest/java/BadIT.java'));
+
+    // 멀티 모듈. 뿌리 기준으로 재면 `app/src/main/java` 가 "소스 트리 밖" 이 되어
+    // 모듈 전체가 조용히 빠졌다. `-p <모듈>` 로 그 모듈만 컴파일한다.
+    fx.w('app/build.gradle', '// 모듈\n');
+    fx.w('app/src/main/java/Bad.java', 'public class Bad { int x = "문자열"; }\n');
+    expect(K, 'java: 멀티 모듈 app/src/main 오류 → 차단', 'block', 2,
+      edit('app/src/main/java/Bad.java'), 'compileJava 실패');
+    fx.w('app/src/main/java/Bad.java', 'public class Bad { }\n');
+    expect(K, 'java: 멀티 모듈 오류를 빼면 → 통과', 'pass', 0, edit('app/src/main/java/Bad.java'));
   } finally {
     rmSync(fx.root, { recursive: true, force: true });
   }
@@ -689,6 +1038,43 @@ function runTsCases(K) {
     expect(K, 'ts: 오류를 빼면 → 통과', 'pass', 0, edit('src/a.ts'));
 
     expect(K, 'ts: .d.ts 는 소관 아님', 'pass', 0, edit('src/types.d.ts'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  runRealTsc(K);
+}
+
+/**
+ * **실제 tsc** 로 한 번. 스텁은 실행 경로와 종료 코드만 본다 — 진짜 타입 오류를
+ * 진짜 컴파일러가 잡아 막는지는 스텁으로 판정할 수 없다.
+ *
+ * `HARNESS_REAL_TSC` 에 설치된 `typescript` 패키지 디렉터리를 주면 픽스처의
+ * `node_modules/typescript` 로 연결해 돌린다. 없으면 **건너뛴 사실을 찍는다.**
+ *   npm install --prefix <어디든> typescript
+ *   HARNESS_REAL_TSC=<어디든>/node_modules/typescript node scripts/verify.mjs
+ */
+function runRealTsc(K) {
+  const pkg = process.env.HARNESS_REAL_TSC;
+  if (!pkg || !existsSync(join(pkg, 'bin', 'tsc'))) {
+    skipped.push({ group: K, name: '실제 tsc 의 타입 판정',
+      why: 'HARNESS_REAL_TSC 가 없다. 스텁은 실행 경로와 종료 코드만 본다' });
+    return;
+  }
+  const root = mkdtempSync(join(tmpdir(), 'harness-realts-'));
+  const w = (rel, body) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); };
+  const edit = (rel) => runHook(HOOK.edit, { tool_name: 'Edit', tool_input: { file_path: join(root, rel) } }, root);
+  try {
+    w('tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, noEmit: true }, include: ['src'] }));
+    w('package.json', JSON.stringify({ devDependencies: { typescript: '*' } }));
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    symlinkSync(pkg, join(root, 'node_modules', 'typescript'), 'junction');
+
+    w('src/a.ts', 'export const n: number = 1;\n');
+    expect(K, 'ts(실제): 타입이 맞으면 → 통과', 'pass', 0, edit('src/a.ts'));
+    w('src/a.ts', 'export const n: number = "문자열";\n');
+    expect(K, 'ts(실제): 타입 오류 → 차단', 'block', 2, edit('src/a.ts'), 'TS2322');
+    w('src/a.ts', 'export const n: number = 2;\n');
+    expect(K, 'ts(실제): 오류를 빼면 → 통과', 'pass', 0, edit('src/a.ts'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -823,6 +1209,11 @@ function verifyApplyTemplate() {
     // Claude Code 가 무시할 수 있고, 무시된 권한 규칙은 조용하다.
     let perms = null;
     try { perms = JSON.parse(readFileSync(join(root, '.claude', 'settings.json'), 'utf8')).permissions; } catch { /* 아래서 실패 */ }
+    // 끄는 스위치(D15)를 에이전트가 **셸로** 켜지 못하게. `Edit(~/.claude/**)` 는
+    // Edit 도구만 덮는다 — `echo > ~/.claude/harness-off` 는 지나갔다(실측 검토).
+    record(A, '공용 settings.json 이 셸로 하네스를 끄는 명령도 묻는다', 'pass',
+      ['Bash(*harness-off*)', 'PowerShell(*harness-off*)', 'Bash(*.claude/settings*)']
+        .every((r) => perms?.ask?.includes(r)), JSON.stringify(perms?.ask));
     record(A, '공용 settings.json 에 git push 를 묻는 규칙이 있다', 'pass',
       Array.isArray(perms?.ask) && perms.ask.includes('Bash(git push *)') && !perms.deny,
       JSON.stringify(perms));
@@ -1021,9 +1412,17 @@ function verifyGatesReport() {
 
     // 짝 — 두 계층이 다 살면 이 경고가 **없어야** 한다. 안 그러면 늘 뜨는 잔소리고,
     // 늘 뜨는 경고는 안 읽힌다.
-    const both = runScript(script, [REPO], { env: wired.env });
+    // **이 저장소(REPO)로 재면 안 된다** — 결과가 이 체크아웃에 git 훅이 깔렸는지에
+    // 딸려 간다(zip 사본에서는 저장소가 아니라 판정 없이 통과했고, 새 clone 에서는
+    // 실패했다). 훅을 깐 픽스처로 잰다.
+    const twoLayers = mkdtempSync(join(tmpdir(), 'harness-both-'));
+    spawnSync('git', ['init', '-q', twoLayers], { encoding: 'utf8', windowsHide: true });
+    const hooked = runScript(join(REPO, 'adapters', 'git', 'install.mjs'), [twoLayers]);
+    const both = runScript(script, [twoLayers], { env: wired.env });
     record(G, '두 계층이 다 살면 계층 경고가 없다', 'pass',
-      !both.out.includes('계층이 비어 있다'), both.out.slice(-300));
+      hooked.code === 0 && [0, 1].includes(both.code) && both.out.includes('git 훅 2/2')
+      && !both.out.includes('계층이 비어 있다'), `install=${hooked.code} report=${both.code}\n${both.out.slice(-300)}`);
+    rmSync(twoLayers, { recursive: true, force: true });
 
     // 기획 지표는 **단계 선언 없이 항상** 보여야 한다. 애자일에서 기획은 매 반복에 온다.
     record(G, '기획 지표가 선언 없이도 보인다', 'pass',
@@ -1177,7 +1576,7 @@ if (fx.error) {
  * 남의 훅을 지우거나, 깨진 JSON 을 못 읽고 새로 쓰는 것. 둘 다 조용하다.
  * 그래서 이 검사의 절반은 "쓰지 않았음" 을 확인한다.
  */
-function verifyClaudeInstall() {
+async function verifyClaudeInstall() {
   const I = 'claude-install';
   const script = join(REPO, 'adapters', 'claude-code', 'install.mjs');
   const A = join(REPO, 'adapters', 'claude-code').replace(/\\/g, '/');
@@ -1214,6 +1613,88 @@ function verifyClaudeInstall() {
     const HOME_WANT = REPO.replace(/\\/g, '/').replace(/\/$/, '');
     record(I, '--apply 로 env.HARNESS_HOME 이 하네스 뿌리로 걸린다', 'pass',
       after.env?.HARNESS_HOME === HOME_WANT, `값=${after.env?.HARNESS_HOME} 기대=${HOME_WANT}`);
+
+    // 2c) 셸로 하네스를 끄는 명령을 **전역에서** 묻는다. 프로젝트에만 두면 템플릿이
+    //     안 놓인 저장소에서 `echo > ~/.claude/harness-off` 한 줄로 꺼진다.
+    record(I, '--apply 로 하네스 끄기·설정 편집을 묻는 전역 규칙이 걸린다', 'pass',
+      ['Bash(*harness-off*)', 'PowerShell(*harness-off*)', 'Bash(*.claude/settings*)']
+        .every((r) => after.permissions?.ask?.includes(r)), JSON.stringify(after.permissions));
+
+    // 2d) node 가 **뜨지도 못하면** 막아야 한다. Claude Code 는 2 가 아닌 종료(127)를
+    //     막지 않는 오류로 다룬다 — 감싸지 않으면 모든 게이트가 조용히 통과한다.
+    //     등록된 명령 줄을 그 셸로 **실제로** 돌려 본다.
+    const { detectShell } = await import(pathToFileURL(join(CC, 'hook-shell.mjs')).href);
+    const hooksOf = (j, file) => Object.values(j.hooks ?? {}).flat().flatMap((g) => g.hooks ?? [])
+      .find((x) => x.command.includes(file));
+    const stopHook = hooksOf(after, 'stop-check.mjs');
+    const logHook = hooksOf(after, 'session-log.mjs');
+    const sh = detectShell();
+    record(I, `훅에 셸이 적힌다 (${sh.shell})`, 'pass', stopHook?.shell === sh.shell, JSON.stringify(stopHook));
+    record(I, '기록 훅(SessionStart)은 감싸지 않는다 — 막지 않는 훅이다', 'pass',
+      logHook && !/exit 2/.test(logHook.command), logHook?.command);
+    const runLine = (line, input) => (sh.shell === 'bash'
+      ? spawnSync(sh.bash, ['-c', line], { input, encoding: 'utf8', windowsHide: true })
+      : spawnSync('powershell', ['-NoProfile', '-Command', line], { input, encoding: 'utf8', windowsHide: true }));
+    const outside = mkdtempSync(join(tmpdir(), 'harness-nogit-'));
+    const notMine = JSON.stringify({ hook_event_name: 'Stop', session_id: 'w', cwd: outside });
+    const ok = runLine(stopHook.command, notMine);
+    record(I, '감싼 명령 — 소관 아님이면 그대로 0', 'pass', ok.status === 0, `exit=${ok.status} ${ok.stderr}`);
+    const broke = runLine(stopHook.command, '{ 깨진');
+    record(I, '감싼 명령 — 판정 불가 2 는 그대로 2', 'block', broke.status === 2, `exit=${broke.status}`);
+    const gone = runLine(stopHook.command.replace(/\bnode\b/, 'node-없는-실행파일'), notMine);
+    record(I, '감싼 명령 — node 가 없으면 → 2 (조용히 통과하지 않는다)', 'block', gone.status === 2,
+      `exit=${gone.status} ${String(gone.stderr).slice(0, 120)}`);
+    const bare = runLine(`node-없는-실행파일 "${A}/stop-check.mjs"`, notMine);
+    record(I, '대조 — 감싸지 않으면 node 가 없을 때 2 가 아니다 (그래서 감싼다)', 'pass', bare.status !== 2,
+      `exit=${bare.status}`);
+    rmSync(outside, { recursive: true, force: true });
+
+    // 2e) **실제 사고.** 한 그룹에 우리 훅이 둘(`commit-checklist`·`guard-script-writes`,
+    //     `session-log`·`session-baseline`)이고 둘 다 고쳐야 하면, 적어 둔 **위치**로
+    //     빼다가 옆 항목을 지웠다. 커밋 게이트가 전역 설정에서 조용히 사라졌다.
+    const cmd = (f) => `node "${A}/${f}"`;
+    const oldShape = {
+      hooks: {
+        PostToolUse: [{ matcher: 'Write|Edit', hooks: [{ type: 'command', command: cmd('edit-check.mjs'), timeout: 300 }] }],
+        PreToolUse: [
+          { matcher: 'Write|Edit|Bash|PowerShell', hooks: [{ type: 'command', command: cmd('guard-migrations.mjs'), timeout: 30 }] },
+          { matcher: 'Bash|PowerShell', hooks: [
+            { type: 'command', command: cmd('commit-checklist.mjs'), timeout: 30 },
+            { type: 'command', command: cmd('guard-script-writes.mjs'), timeout: 30 },
+          ] },
+        ],
+        SessionStart: [{ hooks: [
+          { type: 'command', command: cmd('session-log.mjs'), timeout: 15 },
+          { type: 'command', command: cmd('session-baseline.mjs'), timeout: 60 },
+        ] }],
+        Stop: [{ hooks: [{ type: 'command', command: cmd('stop-check.mjs'), timeout: 60 }] }],
+      },
+    };
+    const eachOnce = (j) => ['edit-check', 'guard-migrations', 'commit-checklist', 'guard-script-writes',
+      'session-log', 'session-baseline', 'stop-check']
+      .map((n) => [n, commands(j).filter((c) => c.includes(`/${n}.mjs`)).length])
+      .filter(([, k]) => k !== 1);
+    const shared2 = home(JSON.stringify(oldShape, null, 2)); boxes.push(shared2);
+    const up = runScript(script, ['--apply'], { env: shared2.env });
+    record(I, '한 그룹에 우리 훅 둘을 함께 고쳐도 → 훅마다 정확히 한 줄 (옆 항목을 안 지운다)', 'pass',
+      up.code === 0 && eachOnce(read(shared2)).length === 0,
+      `exit=${up.code} 틀림=${JSON.stringify(eachOnce(read(shared2)))}\n${up.err.slice(0, 200)}`);
+
+    // 그 사고가 남긴 모양 — 중복과 빠짐 — 도 한 번 돌리면 고쳐진다.
+    const broken2 = structuredClone(oldShape);
+    broken2.hooks.PreToolUse[1].hooks = [
+      { type: 'command', command: cmd('guard-script-writes.mjs') },
+      { type: 'command', command: `${cmd('guard-script-writes.mjs')} || exit 2` },
+    ];
+    broken2.hooks.SessionStart[0].hooks = [
+      { type: 'command', command: cmd('session-baseline.mjs') },
+      { type: 'command', command: cmd('session-baseline.mjs') },
+    ];
+    const dup = home(JSON.stringify(broken2, null, 2)); boxes.push(dup);
+    const heal = runScript(script, ['--apply'], { env: dup.env });
+    record(I, '사고가 남긴 중복·빠짐 → 다시 돌리면 훅마다 한 줄', 'pass',
+      heal.code === 0 && eachOnce(read(dup)).length === 0 && heal.out.includes('중복 정리'),
+      `exit=${heal.code} 틀림=${JSON.stringify(eachOnce(read(dup)))}`);
 
     // 3) 멱등. 두 번 돌려서 늘어나면 죽은 훅과 산 훅이 같이 산다.
     const again = runScript(script, ['--apply'], { env: fresh.env });
@@ -1317,6 +1798,12 @@ function verifyStopCheck() {
     const docsOnly = stop('s1');
     record(S, '문서만 바뀌면 통과', 'pass', docsOnly.code === 0, `exit=${docsOnly.code}\n${docsOnly.out}`);
 
+    // 설정만 바뀐 턴도 판정 명령을 바꾸지 않는다. 예전엔 `.md` 만 뺐다(거짓 차단).
+    w('.gitignore', 'build/\n');
+    w('.claude/harness-budgets.json', '{}');
+    const configOnly = stop('s1');
+    record(S, '.gitignore · .claude/ 만 바뀌면 통과', 'pass', configOnly.code === 0, `exit=${configOnly.code}\n${configOnly.out}`);
+
     w('a.js', 'module.exports = 2;\n');
     const changed = stop('s1');
     record(S, '소스가 바뀌었는데 판정 기록이 없다 → 막는다', 'block',
@@ -1370,6 +1857,16 @@ function verifyStopCheck() {
 
     const broken = runHook(HOOK.stop, '{ 깨진', root);
     record(S, '입력이 깨지면 → 판정 불가(exit 2)', 'block', broken.code === 2, `exit=${broken.code}`);
+
+    // 구현 경로를 **선언했으면** 커밋 게이트와 같은 정의를 쓴다.
+    prd('node -e "process.exit(0)"');
+    w('.claude/harness-gates.json', JSON.stringify({ source: ['lib/'] }));
+    w('a.js', 'module.exports = 5;\n');
+    const outsideSrc = stop('s1');
+    record(S, 'source 선언 밖의 파일만 바뀌면 → 통과', 'pass', outsideSrc.code === 0, `exit=${outsideSrc.code}\n${outsideSrc.out.slice(0, 200)}`);
+    w('lib/b.js', 'module.exports = 1;\n');
+    const insideSrc = stop('s1');
+    record(S, 'source 선언 안의 파일이 바뀌면 → 막는다', 'block', insideSrc.code === 2, `exit=${insideSrc.code}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1487,6 +1984,9 @@ function verifyRecovery() {
 const SUITES = [
   ['guard-migrations', () => verifyMigrations(fx)],
   ['commit-checklist', () => verifyCommit(fx)],
+  ['shells', () => verifyShells(fx)],
+  ['paths', () => verifyPaths()],
+  ['secrets', () => verifySecrets()],
   ['git-command', () => verifyGitCommand()],
   ['script-writes', () => verifyScriptWrites()],
   ['budget', () => verifyBudget()],
