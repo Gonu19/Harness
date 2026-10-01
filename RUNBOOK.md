@@ -46,7 +46,7 @@ git 쪽은 남의 훅이 있으면 **거부하고 멈춘다**(exit 1) — 파일
 | 증상 | 진짜 원인 |
 |---|---|
 | 게이트가 낡은 크기를 잰다 | PreToolUse 는 **명령 전체**를 막는다. `git add && git commit` 이면 `add` 가 안 돌아 직전 인덱스를 잰다. **`add` 를 따로 불러라** |
-| `spawn EINVAL` | Windows 는 `.bat`·`.cmd` 를 셸 없이 못 띄운다. `cmd.exe /d /s /c` 로 감싸거나 JS 진입점을 `node` 로 직접 불러 셸을 피한다 |
+| 저장소를 옮긴 뒤 커밋이 `Cannot find module` 로 막힌다 | `.git/hooks` 가 옛 절대 경로를 가리킨다. `node adapters/git/install.mjs .` 를 다시 |
 | `git checkout -- <경로>` 가 원상복구가 아니다 | **인덱스에서** 복원한다. `HEAD` 를 명시해라 |
 
 ## 비상 — 하네스가 전부 막을 때 · 되돌릴 때

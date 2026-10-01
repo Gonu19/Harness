@@ -72,8 +72,10 @@ const HOOKS = [
   // D11 — 기준점을 남기고, 턴이 끝날 때 완료 판정이 돌았는지 묻는다.
   // 워킹트리 해시(`git add -A` 를 복사 인덱스에)가 큰 저장소에서 수 초 걸린다.
   { file: 'session-baseline.mjs', event: 'SessionStart', matcher: null, timeout: 60, record: true },
+  // Stop 은 **감싸지 않는다**(D22). 감싸면 node 가 없을 때 매번 2 가 나가 턴이 끝나지 않는다 —
+  // "한 번만 막는다" 는 판단이 node 안에 있기 때문이다(`hook-shell.mjs`).
   { file: 'stop-check.mjs', event: 'Stop', matcher: null,
-    timeout: 60, statusMessage: '완료 판정 확인' },
+    timeout: 60, statusMessage: '완료 판정 확인', wrap: false },
 ];
 
 /**
@@ -158,7 +160,7 @@ for (const h of HOOKS) {
     type: 'command',
     // node 가 뜨지도 못하면(127) Claude Code 는 막지 않고 지나간다. 명령 줄에서
     // "0 이 아니면 2" 로 감싸 그 구멍을 막는다 — 셸 문법이 달라 셸을 적어 둔다.
-    command: hookCommand(`${DIR}/${h.file}`, SHELL, !h.record),
+    command: hookCommand(`${DIR}/${h.file}`, SHELL, !h.record && h.wrap !== false),   // 기록 훅과 Stop 은 감싸지 않는다
     shell: SHELL,
     ...(h.extra ?? {}),
     timeout: h.timeout,

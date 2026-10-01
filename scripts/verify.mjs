@@ -1636,14 +1636,49 @@ async function verifyClaudeInstall() {
       ? spawnSync(sh.bash, ['-c', line], { input, encoding: 'utf8', windowsHide: true })
       : spawnSync('powershell', ['-NoProfile', '-Command', line], { input, encoding: 'utf8', windowsHide: true }));
     const outside = mkdtempSync(join(tmpdir(), 'harness-nogit-'));
-    const notMine = JSON.stringify({ hook_event_name: 'Stop', session_id: 'w', cwd: outside });
-    const ok = runLine(stopHook.command, notMine);
+    // 감싼 훅의 표본은 커밋 게이트다. Stop 은 감싸지 않는다(D22) — 아래에서 따로 본다.
+    const gateHook = hooksOf(after, 'commit-checklist.mjs');                               // 감싸야 하는 훅
+    const notMine = JSON.stringify({ tool_name: 'Read', tool_input: {}, cwd: outside });   // 셸 도구가 아니다 → 소관 아님
+    const noNode = (line) => line.replace(/\bnode "/, 'node-없는-실행파일 "');              // node 를 못 찾는 상황을 만든다
+    const ok = runLine(gateHook.command, notMine);
     record(I, '감싼 명령 — 소관 아님이면 그대로 0', 'pass', ok.status === 0, `exit=${ok.status} ${ok.stderr}`);
-    const broke = runLine(stopHook.command, '{ 깨진');
+    const broke = runLine(gateHook.command, '{ 깨진');
     record(I, '감싼 명령 — 판정 불가 2 는 그대로 2', 'block', broke.status === 2, `exit=${broke.status}`);
-    const gone = runLine(stopHook.command.replace(/\bnode\b/, 'node-없는-실행파일'), notMine);
+    const gone = runLine(noNode(gateHook.command), notMine);
     record(I, '감싼 명령 — node 가 없으면 → 2 (조용히 통과하지 않는다)', 'block', gone.status === 2,
       `exit=${gone.status} ${String(gone.stderr).slice(0, 120)}`);
+
+    // D22 — 감싸기의 반대쪽. node 가 없어 전부 막힌 그때 **끄는 스위치가 들어야** 한다.
+    // 스위치 확인이 node 안에만 있으면 정확히 이 경우에 못 끈다.
+    writeFileSync(OFF_FILE, 'node 가 없다\n');                                             // 사람이 스위치를 켠다
+    const escaped = runLine(noNode(gateHook.command), notMine);                             // node 는 여전히 없다
+    rmSync(OFF_FILE, { force: true });                                                      // 다른 사례에 새지 않게 끈다
+    record(I, 'node 가 없어도 끄는 스위치는 듣는다 (셸에서 먼저 본다)', 'pass', escaped.status === 0,
+      `exit=${escaped.status} ${String(escaped.stderr).slice(0, 120)}`);
+
+    // Stop 은 감싸지 않는다. 감싸면 node 가 없을 때 매번 2 → 턴이 끝나지 않는다.
+    record(I, 'Stop 훅은 감싸지 않는다 — node 가 없을 때 턴이 끝나야 한다', 'block',
+      stopHook && !/exit 2/.test(stopHook.command), stopHook?.command);
+    const stopGone = runLine(noNode(stopHook.command), JSON.stringify({ hook_event_name: 'Stop', session_id: 'w', cwd: outside }));
+    record(I, 'Stop 훅 — node 가 없으면 2 가 아니다 (루프가 되지 않는다)', 'pass', stopGone.status !== 2,
+      `exit=${stopGone.status}`);
+
+    // 이 기계의 훅 셸이 bash 면 위 사례는 bash 줄만 돌린다. PowerShell 줄은 문법이 달라
+    // (`||` 가 없다) 따로 돌려야 한다 — Git Bash 없는 Windows 에서 실제로 쓰이는 줄이다.
+    if (process.platform === 'win32') {
+      const { hookCommand } = await import(pathToFileURL(join(CC, 'hook-shell.mjs')).href);
+      const psLine = hookCommand(`${A}/commit-checklist.mjs`, 'powershell');                 // PowerShell 용으로 감싼 줄
+      const ps = (line) => spawnSync('powershell', ['-NoProfile', '-Command', line],
+        { input: notMine, encoding: 'utf8', windowsHide: true });                            // 그 줄을 PowerShell 로 돌린다
+      const psGone = psLine.replace('& node "', '& node-없는-실행파일 "');                    // node 를 못 찾는 상황
+      record(I, 'PowerShell 줄 — node 가 없으면 → 2', 'block', ps(psGone).status === 2, psLine);
+      writeFileSync(OFF_FILE, 'node 가 없다\n');                                             // 스위치를 켠다
+      const psEscaped = ps(psGone);                                                          // node 없이 다시 돌린다
+      rmSync(OFF_FILE, { force: true });                                                     // 스위치를 끈다
+      record(I, 'PowerShell 줄 — node 가 없어도 스위치는 듣는다', 'pass', psEscaped.status === 0, `exit=${psEscaped.status}`);
+    } else {
+      skipped.push({ group: I, name: 'PowerShell 로 감싼 명령 줄', why: 'Windows 가 아니다 — powershell 이 없다' });
+    }
     const bare = runLine(`node-없는-실행파일 "${A}/stop-check.mjs"`, notMine);
     record(I, '대조 — 감싸지 않으면 node 가 없을 때 2 가 아니다 (그래서 감싼다)', 'pass', bare.status !== 2,
       `exit=${bare.status}`);

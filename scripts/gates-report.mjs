@@ -167,6 +167,13 @@ const shellMatchers = new Map();
  * 그걸 **막지 않는 오류**로 다룬다 — 게이트가 조용히 통과한다(`hook-shell.mjs`).
  */
 const unwrapped = new Set();
+/**
+ * 감싸기의 반대쪽 위험(D22) 둘. 옛 설치가 남긴 모양이라 `install` 을 다시 돌리면 고쳐진다.
+ *   noShellSwitch — 감쌌는데 끄는 스위치를 셸에서 안 본다. node 가 없으면 스위치도 안 듣는다
+ *   stopWrapped   — Stop 훅이 감싸였다. node 가 없으면 매번 2 가 나가 턴이 끝나지 않는다
+ */
+const noShellSwitch = new Set();
+let stopWrapped = false;
 for (const path of settingsFiles) {
   const r = readJson(path);
   if (r.missing) continue;
@@ -178,7 +185,10 @@ for (const path of settingsFiles) {
         for (const name of ['edit-check', 'guard-migrations', 'commit-checklist', 'guard-script-writes', 'stop-check']) {
           if (!cmd.includes(name)) continue;
           registered.add(name);
-          if (!/exit 2/.test(cmd)) unwrapped.add(name);
+          const wrapped = /exit 2/.test(cmd);                                  // "0 이 아니면 2" 로 감쌌나
+          if (name === 'stop-check') stopWrapped = stopWrapped || wrapped;      // Stop 은 감싸면 안 된다
+          else if (!wrapped) unwrapped.add(name);                              // 나머지는 감싸야 한다
+          else if (!/harness-off|HARNESS_OFF_FILE/.test(cmd)) noShellSwitch.add(name);   // 감쌌는데 스위치를 안 본다
           if (SHELL_GATES.includes(name)) {
             shellMatchers.set(name, [...(shellMatchers.get(name) ?? []), String(entry?.matcher ?? '')]);
           }
@@ -532,6 +542,17 @@ if (gates.some((g) => g.applies) && (liveGit === 0 || registered.size === 0)) {
     console.log('  ★ 도구 계층이 비어 있다. 편집 직후 검사가 없고, 커밋 게이트는 `--no-verify` 로 뚫린다');
     console.log('    → `adapters/claude-code/install.mjs` (미리보기 후 --apply)');
   }
+}
+
+// 감싸기의 반대쪽(D22) — node 가 없을 때 **빠져나올 길**이 있는가.
+if (noShellSwitch.size > 0) {
+  console.log(`\n★ node 를 못 띄우면 끄는 스위치도 안 듣는 훅 — ${[...noShellSwitch].join(' · ')}`);
+  console.log('    명령 줄이 스위치(`~/.claude/harness-off`)를 셸에서 보지 않는다. node 가 없으면 전부 막힌 채 못 끈다');
+  console.log('    → `adapters/claude-code/install.mjs` 를 다시 돌리면 고친다');
+}
+if (stopWrapped) {
+  console.log('\n★ Stop 훅이 `|| exit 2` 로 감싸여 있다 — node 를 못 띄우면 턴이 끝나지 않는다');
+  console.log('    → `adapters/claude-code/install.mjs` 를 다시 돌리면 푼다');
 }
 
 if (unwrapped.size > 0) {

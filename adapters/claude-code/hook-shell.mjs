@@ -11,6 +11,19 @@
  *
  * 그래서 명령 줄에서 한 번 더 감싼다: **0 이 아니면 전부 2.** 0 과 2 는 그대로다.
  *
+ * ## 감싸면 생기는 반대쪽 위험 — 그래서 둘을 같이 둔다 (D22)
+ *
+ * 감싸면 node 가 없을 때 **모든 프로젝트의 도구가 막힌다.** 그때 사람이 쓸 비상구가
+ * 끄는 스위치(D15)인데, 스위치 확인이 node 안(`hook-io.guard`)에만 있으면 정확히 이
+ * 경우에 듣지 않는다. 그래서 스위치를 **명령 줄에서도** 본다.
+ *
+ * ## STOP 은 감싸지 않는다
+ *
+ * Stop 훅이 2 를 내면 턴이 끝나지 않는다. "한 번만 막는다"(`stop_hook_active`)는
+ * 판단은 node 안에 있다 — node 가 없으면 그 판단도 없어서 **매번 2** 가 나가고
+ * 턴이 끝나지 않는 루프가 된다. 조용히 지나가는 쪽이 낫다: Claude Code 는 2 가 아닌
+ * 종료를 전사에 "hook error" 로 보여 주므로 완전히 조용하지는 않다.
+ *
  * ## 셸마다 문법이 다르다
  *
  * Claude Code 는 명령 훅을 bash 로, Windows 에서 Git Bash 가 없으면 PowerShell 로
@@ -58,8 +71,17 @@ export function gitBashPath(env = process.env) {
  *                              막지 않는다(`session-log`·`session-baseline` 머리 주석)
  */
 export function hookCommand(script, shell, failClosed = true) {
-  if (!failClosed) return `node "${script}"`;
+  // 막지 않는 훅은 감싸지 않는다 — node 가 없으면 조용히 지나가는 것이 맞는 훅이다.
+  if (!failClosed) return `node "${script}"`;   // 기록 훅 · Stop 훅(아래 `STOP 은 감싸지 않는다`)
+
+  // 끄는 스위치(D15)를 **셸에서 먼저** 본다(D22). 스위치 확인이 node 안에만 있으면,
+  // node 가 없어 전부 막힌 바로 그때 스위치가 듣지 않는다 — 비상구가 비상에 안 열린다.
+  // 경로 규칙은 `core/off.mjs` 와 같다: `HARNESS_OFF_FILE` 이 있으면 그것, 없으면 홈 아래.
+  const bashOff = '[ -e "${HARNESS_OFF_FILE:-$HOME/.claude/harness-off}" ]';                       // 스위치 파일이 있으면 참
+  const psOff = 'if (Test-Path $(if ($env:HARNESS_OFF_FILE) { $env:HARNESS_OFF_FILE } else { "$HOME/.claude/harness-off" })) { exit 0 }';  // 있으면 0 으로 끝낸다
+
+  // 그다음 훅을 돌리고, **0 이 아니면 전부 2** 로 바꾼다 — node 가 뜨지 못한 127 도 막음이 된다.
   return shell === 'powershell'
-    ? `& node "${script}"; if (-not $?) { exit 2 }`
-    : `node "${script}" || exit 2`;
+    ? `${psOff}; & node "${script}"; if (-not $?) { exit 2 }`   // PowerShell 5.1 에는 `||` 가 없다
+    : `${bashOff} || node "${script}" || exit 2`;               // 스위치가 있으면 앞에서 0 으로 끝난다
 }

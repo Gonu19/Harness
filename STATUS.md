@@ -50,3 +50,5 @@
   `HARNESS_REAL_TSC` 를 주면 `verify` 가 돌린다 — 없으면 건너뜀을 찍는다
 - **`/harness-init` 은 아직 안 돌았다.** 스킬은 회귀로 검증할 수 없다 —
   첫 실제 온보딩이 판정이다
+- **도구 계층이 놓치는 커밋 형태가 있다**(`VAR=x git commit` · `bash -c` · 제어문 안).
+  git 계층이 뒤에서 잡지만 `--no-verify` 와 겹치면 둘 다 지난다 — `OPEN.md`
