@@ -61,6 +61,7 @@ const FILES = [   // push 로 --with 항목이 붙는다. const 라도 배열 �
   { from: '.claude/rules/decisions.md.tpl', to: '.claude/rules/decisions.md', what: '조건부 규칙 — 문서' },
   { from: '.claude/rules/verification.md.tpl', to: '.claude/rules/verification.md', what: '조건부 규칙 — 검증' },
   { from: '.claude/rules/cycle.md.tpl', to: '.claude/rules/cycle.md', what: '조건부 규칙 — 활동·탐색·서브에이전트' },
+  { from: '.claude/rules/comments.md.tpl', to: '.claude/rules/comments.md', what: '조건부 규칙 — 문단 주석·줄 주석' },
   { from: '.claude/harness-budgets.json', to: '.claude/harness-budgets.json', what: '문서 예산' },
   { from: '.claude/settings.local.json.tpl', to: '.claude/settings.local.json', what: '모델·규칙 제외' },
   { from: '.claude/settings.project.json.tpl', to: '.claude/settings.json', what: '위험 명령은 사람에게 묻는다 (ask)' },

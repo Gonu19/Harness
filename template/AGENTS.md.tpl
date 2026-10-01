@@ -28,6 +28,7 @@
 | `.claude/rules/decisions.md` | 문서·결정을 쓸 때. 구역 셋, 관측/결정, 예산 배출구 |
 | `.claude/rules/verification.md` | 소스를 건드릴 때. 검증 관례 셋 |
 | `.claude/rules/cycle.md` | 활동을 바꿀 때 · 탐색할 때 · 서브에이전트를 쓸 때 |
+| `.claude/rules/comments.md` | 코드를 쓸 때. **문단마다 · 줄마다 주석** |
 
 ## 게이트
 
