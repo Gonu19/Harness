@@ -8,7 +8,9 @@
 
 이 구조는 `PRD.md` 의 품질 목표 **Q1**(판정 실패가 통과로 접히지 않는다)과
 **Q3**(에이전트에 묶이지 않는다)를 기준으로 나눴다. 판정을 한 곳(`core/`)에 모으고,
-에이전트마다 다른 입출력 규약은 어댑터가 맡는다.
+에이전트마다 다른 입출력 규약은 어댑터가 맡는다. 사이클 안내(`next`)는 **Q5**
+(활동을 선언하지 않는다)를 따라 판정 기록·PRD·git 상태만 읽는다 — 게이트와 같은
+사실을 읽고, 막는 대신 알린다.
 
 ## L1 — 시스템 컨텍스트
 
@@ -17,10 +19,11 @@ C4Context
   title Harness — 컨텍스트
   Person(dev, "개발자", "하네스를 붙이고, 막힌 것을 본다")
   System_Ext(agent, "코딩 에이전트", "Claude Code · Codex · Gemini · Cursor")
-  System(harness, "Harness", "게이트 · 이식 · 반복 · 생존 판정")
+  System(harness, "Harness", "워크플로우 — 사이클 안내 · 가드레일(게이트) · 이식 · 반복")
   System_Ext(repo, "대상 프로젝트", "git 저장소")
   Rel(dev, harness, "이식하고 판정을 읽는다")
   Rel(agent, repo, "편집하고 커밋한다")
+  Rel(harness, agent, "다음 할 일을 알린다", "SessionStart · next")
   Rel(harness, agent, "도구 호출을 막는다", "훅 · exit 2")
   Rel(harness, repo, "커밋을 막는다", "git 훅 · exit 1")
 ```
@@ -37,7 +40,7 @@ C4Container
     Container(core, "core/", "Node", "판정: skip · pass · block · cannot")
     Container(acc, "adapters/claude-code/", "Node", "stdin JSON → 판정 → exit 0/2")
     Container(agit, "adapters/git/", "Node", "메시지·인덱스 → 판정 → exit 0/1")
-    Container(scripts, "scripts/", "Node", "verify · gates-report · budget · apply-template")
+    Container(scripts, "scripts/", "Node", "next · done · verify · gates-report · budget · apply-template")
     Container(tpl, "template/ · skills/", "Markdown", "놓을 문서 · 채우는 절차")
   }
   Rel(cc, acc, "훅을 부른다")

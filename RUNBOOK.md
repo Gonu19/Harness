@@ -9,6 +9,7 @@ node scripts/verify.mjs                   # 판정이 맞나 (변조 회귀)
 node scripts/gates-report.mjs <저장소>    # 그 판정이 걸려 있나
 node scripts/budget.mjs <저장소>          # 문서가 한도 안인가 (쓰는 중에)
 node scripts/done.mjs F<n>                # 기능 판정 + 기록 (Stop 이 본다)
+node scripts/next.mjs                     # 지금 할 활동 (사실에서 계산)
 ```
 
 앞 둘은 하나만 보면 반쪽이다. 종료 코드와 표 읽는 법은 스크립트가 스스로
@@ -37,10 +38,6 @@ node adapters/claude-code/install.mjs    # 도구 계층. 전역 한 번. --appl
 git 쪽은 남의 훅이 있으면 **거부하고 멈춘다**(exit 1) — 파일 하나라 덮어쓰기밖에
 없다. Claude Code 쪽은 배열이라 공존한다. 전역인 이유: 프로젝트 `.claude/` 는
 보통 git 밖이라 거기 걸면 워크트리에서 훅이 없다 — 조용히.
-
-```bash
-for f in core/*.mjs adapters/*/*.mjs scripts/*.mjs; do node --check $f; done
-```
 
 ## 도구가 실패하는 방식
 

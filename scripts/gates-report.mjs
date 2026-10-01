@@ -33,6 +33,7 @@ import { parseFeatures } from '../core/done.mjs';
 import { summarize } from '../core/blocklog.mjs';
 import { readOff, offPath } from '../core/off.mjs';
 import { loadGates } from '../core/gates.mjs';
+import { readOpenLedger, readIteration, nextActivity } from '../core/cycle.mjs';
 
 const target = resolve(process.argv[2] ?? process.cwd());
 
@@ -100,98 +101,9 @@ const sourceNote = noBuildDeclared || sourceDirsPresent.length > 0 ? ''
  * 단계가 아니라 **활동**(기획 · 구현 · QA · 문서화)으로 줄을 세운다.
  */
 
-/**
- * `YYYY-MM-DD` 로부터 **현지 달력으로** 며칠 지났나.
- *
- * `Date.parse('2026-09-23')` 는 **UTC 자정**이다. 사람이 적은 날짜는 현지
- * 날짜라, 한국 시간 아침 9시 전에는 오늘 연 반복이 `-1일째` 로 나왔다
- * (실측). 현지 자정끼리 뺀다.
- *
- * 음수는 **미래 날짜** — 대개 오타다. 0 으로 접지 않는다. 접으면 틀린 날짜가
- * "오늘 시작" 으로 보인다.
- */
-function daysSince(ymd) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd ?? '');
-  if (!m) return null;
-  const then = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.round((today - then) / 86400000);   // 서머타임이 있는 곳에서도 반올림이 맞다
-}
-
-/**
- * 미결 등록부를 읽는다.
- *
- * **못 읽은 것과 비어 있는 것을 가른다.** "0개" 와 "못 읽었다" 가 같은 출력으로
- * 나가면 표를 믿을 수 없다 — 이 저장소가 종료 코드에서 없앤 혼동과 같은 것이다.
- */
-function readOpenLedger(root) {
-  const path = join(root, 'decisions', 'OPEN.md');
-  if (!existsSync(path)) return { missing: true };
-
-  let text;
-  try { text = readFileSync(path, 'utf8'); }
-  catch (error) { return { error: String(error) }; }
-
-  // **절(`## `)별로 나눠 센다.** 한 파일의 모든 표 줄을 세면 「조건 대기」처럼
-  // 원래 늙어야 하는 항목이 나이 지표를 차지한다 — 첫 회고에서 실제로 그랬다
-  // (가장 오래된 것 13일 = 전부 조건 대기). 그러면 닫기를 피하는 질문이 생겨도
-  // 그 숫자에 묻혀 안 보인다.
-  const sections = text.replace(/<!--[\s\S]*?-->/g, '').split(/^## /m);
-  const tableOf = (heads) => {
-    const s = sections.find((sec) => heads.some((h) => sec.startsWith(h)));
-    if (!s) return null;
-    return s.split('\n')
-      .filter((l) => l.trim().startsWith('|'))
-      .map((l) => l.split('|').map((c) => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1))
-      .filter((cells) => cells.length >= 2)
-      .filter((cells) => !/^-+$/.test(cells[0] ?? ''))
-      .filter((cells) => cells[0] && cells[0] !== '질문' && !/^<.*>$/.test(cells[0]));
-  };
-
-  // `열린 질문` 은 절을 나누기 전의 옛 이름이다. 이미 이식된 저장소를 깨지 않는다.
-  const choosing = tableOf(['고르는 중', '열린 질문']) ?? [];
-  const waiting = tableOf(['조건 대기']) ?? [];
-
-  const ages = choosing
-    .map((cells) => daysSince(cells[cells.length - 1]))
-    .filter((n) => n !== null);
-
-  return {
-    open: choosing.length,
-    waiting: waiting.length,
-    oldest: ages.some((n) => n >= 0) ? Math.max(...ages.filter((n) => n >= 0)) : null,
-    future: ages.filter((n) => n < 0).length,   // max 에 숨기지 않는다
-    dated: ages.length,
-  };
-}
-
-/**
- * 이번 반복 — `STATUS.md` 의 「이번 반복」 절에서 시작일과 목표를 읽는다.
- *
- * 반복의 **나이**를 세는 이유: 회고가 밀리면 다음 반복의 기획이 지난 반복의
- * 의문 없이 시작된다. 그런데 며칠이 긴지는 도구가 모른다 — 그래서 막지 않고
- * **보여 준다.**
- *
- * 세 가지를 가른다 — 절이 **없다** · 있는데 **날짜를 못 읽었다** · 읽었다.
- * 앞의 둘을 같은 출력으로 내면 "반복을 안 쓰는 저장소" 와 "형식이 깨진
- * 저장소" 가 구별되지 않는다.
- */
-function readIteration(root) {
-  const path = join(root, 'STATUS.md');
-  if (!existsSync(path)) return { missing: true };
-  let text;
-  try { text = readFileSync(path, 'utf8'); } catch (error) { return { error: String(error) }; }
-
-  const section = text.split(/^## /m).find((s) => s.startsWith('이번 반복'));
-  if (!section) return { missing: true };
-
-  // HTML 주석 안의 설명 문구는 건너뛴다 — 형식 예시를 값으로 읽으면 안 된다.
-  const body = section.replace(/<!--[\s\S]*?-->/g, '');
-  const start = body.match(/^- 시작:\s*(\d{4}-\d{2}-\d{2})\s*$/m)?.[1] ?? null;
-  const goal = body.match(/^- 목표:\s*(.+)$/m)?.[1]?.trim() ?? null;
-  return { start, goal, age: daysSince(start) };
-}
+// 반복·미결 등록부를 읽는 법은 `core/cycle.mjs` 에 있다 — `next` 와 같은 읽기를 쓴다.
+// 반복의 **나이**를 세는 이유: 회고가 밀리면 다음 반복의 기획이 지난 반복의
+// 의문 없이 시작된다. 며칠이 긴지는 도구가 모른다 — 막지 않고 **보여 준다.**
 
 /**
  * PRD 「핵심 기능」의 완료 판정. (D8)
@@ -593,6 +505,13 @@ if (iteration.missing) {
     ? `  ✗ 시작일 ${iteration.start} 이 미래다 — 오타인가`
     : `  ${iteration.age}일째  (${iteration.start} 시작)`);
   console.log(`  목표  ${iteration.goal ?? '(없다 — 끝났는지 판정할 수 없다)'}`);
+}
+
+// 다음 활동(D20) — 표가 "무엇이 걸려 있나" 라면 이 줄은 "무엇을 할 차례인가" 다.
+// 판정에 넣지 않는다. 자세한 것은 `next` 가 말한다.
+{
+  const n = nextActivity(target);
+  console.log(n.cannot ? `  다음  ✗ 계산하지 못했다 — ${n.cannot}` : `  다음  ${n.activity} — ${n.why}`);
 }
 
 // 계층 하나가 통째로 비어 있는 것은 **개별 게이트로는 안 보인다.** 위 표는

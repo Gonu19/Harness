@@ -13,6 +13,7 @@
 
 1. `STATUS.md` — 지금 무엇이 되어 있고 다음이 무엇인가
 2. `RUNBOOK.md` — 명령. 재발명하지 않는다
+3. `node scripts/next.mjs` — 지금 할 활동(`D20`)
 
 **커밋할 때 같이 고친다.** 낡으면 없느니만 못하다. 이 둘과 `AGENTS.md`·`OPEN.md` 는 3KB 한도다(`D10`).
 

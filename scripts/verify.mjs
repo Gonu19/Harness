@@ -1981,6 +1981,100 @@ function verifyRecovery() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 검사 13 — next (D20). **활동은 선언이 아니라 사실에서 계산된다.**
+//
+// 가지마다 그 사실을 만들어 놓고 그 활동이 나오는지 본다. 짝: 안내는 막지 않으므로
+// 막힘 사례는 "계산 불가" 와 "하네스 없는 저장소에서 말하지 않기" 다.
+// ---------------------------------------------------------------------------
+function verifyNext() {
+  const N = 'next';
+  const next = join(REPO, 'scripts', 'next.mjs');
+  const done = join(REPO, 'scripts', 'done.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'harness-next-'));
+  const w = (rel, body) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); };
+  const status = (extra = '') => w('STATUS.md', `# 상태\n\n## 이번 반복\n\n- 시작: 2026-09-01\n- 목표: 더하기가 된다\n${extra}\n`);
+  const prd = (rows) => w('PRD.md', '# PRD\n\n## 핵심 기능\n\n| # | 기능 | 완료 판정 |\n|---|---|---|\n' + rows.join('\n') + '\n');
+  const say = () => runScript(next, [root]);
+  const is = (r, act) => r.code === 0 && r.out.includes(`다음  ${act}`);
+
+  try {
+    spawnSync('git', ['init', '-q', root], { encoding: 'utf8', windowsHide: true });
+    for (const [k, v] of [['user.email', 'n@h.local'], ['user.name', 'n'], ['commit.gpgsign', 'false']]) git(root, ['config', k, v]);
+
+    let r = say();
+    record(N, '반복이 없으면 → 기획 (반복을 연다)', 'pass', is(r, '기획') && r.out.includes('이번 반복'), r.out + r.err);
+
+    status();
+    prd(['| F1 | 더하기 | <채울 것: 명령> |']);
+    r = say();
+    record(N, '채울 칸이 남았으면 → 기획', 'pass', is(r, '기획') && r.out.includes('채우지 않은 칸'), r.out);
+
+    prd(['| F1 | 더하기 | `node -e "process.exit(0)"` |', '| F2 | 빼기 | 빼기가 된다 |']);
+    r = say();
+    record(N, '판정 명령 없는 기능이 있으면 → 기획', 'pass', is(r, '기획') && r.out.includes('F2'), r.out);
+
+    status('- 기능: F1');
+    r = say();
+    record(N, '반복의 기능 줄 밖의 기능은 보지 않는다 → F1 새로 → 구현', 'pass',
+      is(r, '구현') && r.out.includes('F1 새로') && !r.out.includes('F2'), r.out);
+    record(N, '실제 인덱스를 건드리지 않는다', 'block',
+      git(root, ['diff', '--cached', '--name-only']).stdout.trim() === '', '');
+
+    prd(['| F1 | 더하기 | `node -e "process.exit(1)"` |']);
+    runScript(done, ['F1', root]);
+    r = say();
+    record(N, '지금 코드에서 판정이 실패했으면 → 구현 (고친다)', 'pass', is(r, '구현') && r.out.includes('F1 실패'), r.out);
+
+    prd(['| F1 | 더하기 | `node -e "process.exit(0)"` |']);
+    runScript(done, ['F1', root]);
+    w('a.js', '1\n');
+    r = say();
+    record(N, '판정 뒤로 코드가 바뀌었으면 → QA', 'pass', is(r, 'QA') && r.out.includes('done.mjs" F1'), r.out);
+
+    runScript(done, ['F1', root]);
+    r = say();
+    record(N, '전부 통과 · 커밋 안 된 변경 → 문서화', 'pass', is(r, '문서화'), r.out);
+
+    git(root, ['add', '-A']);
+    git(root, ['commit', '-q', '-m', '더하기']);
+    r = say();
+    record(N, '전부 통과 · 깨끗하다 → 회고', 'pass', is(r, '회고') && r.out.includes('/harness-retro'), r.out);
+
+    // 우선순위 — 깨진 것(실패)을 두고 다른 것을 다시 판정(QA)하지 않는다.
+    status('- 기능: F1, F3');
+    prd(['| F1 | 더하기 | `node -e "process.exit(0)"` |', '| F3 | 곱하기 | `node -e "process.exit(1)"` |']);
+    runScript(done, ['F3', root]);          // F3: 지금 트리에서 실패
+    w('b.js', '2\n');                        // 트리가 바뀐다 → F1: 다시 판정, F3: 다시 판정
+    runScript(done, ['F3', root]);          // F3: 새 트리에서도 실패
+    r = say();
+    record(N, '실패와 다시 판정이 같이 있으면 → 구현 (실패가 먼저)', 'block',
+      is(r, '구현') && r.out.includes('F3 실패') && r.out.includes('F1 다시 판정'), r.out);
+    status();
+    prd(['| F1 | 더하기 | `node -e "process.exit(0)"` |']);
+    rmSync(join(root, 'b.js'), { force: true });
+    git(root, ['checkout', '-q', '--', '.']);
+
+    // 세션 시작에 알린다 — 하네스를 쓰는 저장소에서만.
+    const start = runHook(HOOK.baseline, { hook_event_name: 'SessionStart', session_id: 'n1', cwd: root }, root);
+    record(N, 'SessionStart 가 지금 할 활동을 컨텍스트로 낸다', 'pass',
+      start.code === 0 && start.out.includes('[harness] 지금 할 활동: 회고'), start.out);
+
+    const plain = mkdtempSync(join(tmpdir(), 'harness-plain-'));
+    spawnSync('git', ['init', '-q', plain], { encoding: 'utf8', windowsHide: true });
+    const quiet = runHook(HOOK.baseline, { hook_event_name: 'SessionStart', session_id: 'n2', cwd: plain }, plain);
+    record(N, '하네스 없는 저장소에서는 말하지 않는다', 'block', quiet.code === 0 && quiet.out.trim() === '', quiet.out);
+    rmSync(plain, { recursive: true, force: true });
+
+    const outside = mkdtempSync(join(tmpdir(), 'harness-nogit-'));
+    const nogit = runScript(next, [outside]);
+    record(N, 'git 저장소가 아니면 → 계산 불가(exit 2)', 'block', nogit.code === 2, `exit=${nogit.code}`);
+    rmSync(outside, { recursive: true, force: true });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const SUITES = [
   ['guard-migrations', () => verifyMigrations(fx)],
   ['commit-checklist', () => verifyCommit(fx)],
@@ -2001,6 +2095,7 @@ const SUITES = [
   ['stop-check', () => verifyStopCheck()],
   ['block-log', () => verifyBlockLog()],
   ['recovery', () => verifyRecovery()],
+  ['next', () => verifyNext()],
 ];
 const onlyIndex = process.argv.indexOf('--only');
 const ONLY = onlyIndex >= 0

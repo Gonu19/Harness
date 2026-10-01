@@ -10,6 +10,7 @@
 
 1. `STATUS.md` — 지금 무엇이 돌고 무엇이 막혀 있나
 2. `RUNBOOK.md` — 명령. 재발명하지 않는다
+3. `node "$HARNESS_HOME/scripts/next.mjs"` — **지금 할 활동.** 사실에서 계산한다
 
 구조·요구를 건드리면 `PRD.md`(무엇을 왜)·`ARCHITECTURE.md`(C4)도.
 **기능이 끝났다고 말하기 전에 판정을 돌린다** — `node "$HARNESS_HOME/scripts/done.mjs" F<n>`. 안 돌렸으면 끝난 게 아니다.
